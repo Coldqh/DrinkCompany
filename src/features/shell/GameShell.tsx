@@ -30,30 +30,28 @@ export function GameShell({ game }: { game: GameController }) {
   }
 
   return (
-    <div className="app-shell">
-      <div className="ambient ambient-one" />
-      <div className="ambient ambient-two" />
-
-      <header className="topbar">
+    <div className="app-shell compact-shell">
+      <header className="topbar compact-topbar">
         <div className="topbar-brand">
           <div className="brand-symbol"><span>D</span><i /></div>
           <div>
-            <span className="topbar-overline">DAY {String(game.state.day).padStart(3, '0')} · {game.state.mode === 'roguelike' ? 'HARD' : 'STANDARD'}</span>
+            <span className="topbar-overline">День {game.state.day} · {game.state.mode === 'roguelike' ? 'рогалик' : 'стандарт'}</span>
             <h1>{game.state.company.name}</h1>
           </div>
         </div>
         <div className="topbar-actions">
-          <div className="cash-display"><span>доступно</span><strong>{formatMoney(game.state.finance.cash)}</strong></div>
+          <div className="cash-display"><span>баланс</span><strong>{formatMoney(game.state.finance.cash)}</strong></div>
           <div className={`save-indicator ${game.saveStatus}`} title={game.saveStatus === 'error' ? 'Ошибка сохранения' : 'Автосохранение'}><i /></div>
         </div>
       </header>
 
-      <main className="content">
+      <main className="content compact-content" key={tab}>
         {tab === 'company' && (
           <CompanyDashboard
             state={game.state}
             onOpenProduction={() => setTab('production')}
             onOpenBatches={() => setTab('batches')}
+            onOpenMarket={() => setTab('market')}
             onDismissTutorial={game.hideTutorial}
           />
         )}
@@ -80,15 +78,13 @@ export function GameShell({ game }: { game: GameController }) {
 
       {dayMessage && <div className="day-toast"><Icon name="check" />{dayMessage}</div>}
 
-      <div className="day-dock">
-        <button onClick={finishDay}>
-          <span><Icon name="clock" /><b>Завершить день</b></span>
-          <small>−{formatMoney(game.state.finance.dailyFixedCost)} · {activeBatches > 0 ? `${activeBatches} партий обновятся` : 'нет активных партий'}</small>
-          <Icon name="arrow" className="dock-arrow" />
-        </button>
-      </div>
+      <button className="compact-day-button" onClick={finishDay}>
+        <span><Icon name="clock" /><b>Следующий день</b></span>
+        <small>−{formatMoney(game.state.finance.dailyFixedCost)}{activeBatches > 0 ? ` · ${activeBatches} в работе` : ''}</small>
+        <Icon name="arrow" />
+      </button>
 
-      <nav className="bottom-nav" aria-label="Основная навигация">
+      <nav className="bottom-nav compact-bottom-nav" aria-label="Основная навигация">
         {tabs.map((item) => (
           <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
             <span className="nav-icon"><Icon name={item.icon} />{item.id === 'batches' && activeBatches > 0 && <i>{activeBatches}</i>}{item.id === 'market' && activeOffers > 0 && <i>{activeOffers}</i>}</span>

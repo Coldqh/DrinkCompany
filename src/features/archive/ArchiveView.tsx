@@ -1,7 +1,8 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { GameState } from '../../domain/game';
-import { getStyle } from '../../domain/production';
+import { getStyle, type SavedRecipe } from '../../domain/production';
 import { Icon } from '../../ui/Icon';
+import { CompactHeader, EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
 
 interface ArchiveViewProps {
   state: GameState;
@@ -10,69 +11,121 @@ interface ArchiveViewProps {
   onReset: () => void;
 }
 
+type ArchiveSection = 'recipes' | 'sales' | 'data';
+
 export function ArchiveView({ state, onExport, onImport, onReset }: ArchiveViewProps) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const [section, setSection] = useState<ArchiveSection>('recipes');
+  const [selectedRecipe, setSelectedRecipe] = useState<SavedRecipe | null>(null);
+  const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
+  const selectedSale = state.world?.sales.find((sale) => sale.id === selectedSaleId) ?? null;
 
   return (
-    <div className="archive-view">
-      <section className="archive-hero glass-card">
-        <div><span className="section-kicker">company memory</span><h2>Рецепты, партии и сохранение</h2><p>Каждая версия остаётся в истории. Даже слабая партия может стать полезной точкой сравнения.</p></div>
-        <div className="archive-count"><strong>{state.production.recipes.length}</strong><span>версий рецептов</span></div>
-      </section>
+    <div className="screen-stack archive-compact">
+      <CompactHeader kicker="Архив" title="Память компании" meta={`${state.production.recipes.length} рецептов · ${state.world?.sales.length ?? 0} продаж · автосохранение включено`} action={<div className="archive-mark"><Icon name="archive" /></div>} />
 
-      <section>
-        <div className="section-title-row"><div><span className="section-kicker">рецептурный архив</span><h3>Сохранённые версии</h3></div></div>
-        {state.production.recipes.length === 0 ? (
-          <div className="empty-row glass-card"><Icon name="archive" /><span><strong>Архив пуст</strong><small>Сохрани рецепт в производственной студии.</small></span></div>
+      <SubTabs value={section} onChange={setSection} options={[
+        { id: 'recipes', label: 'Рецепты', badge: state.production.recipes.length },
+        { id: 'sales', label: 'Продажи', badge: state.world?.sales.length ?? 0 },
+        { id: 'data', label: 'Данные' },
+      ]} />
+
+      {section === 'recipes' && (
+        state.production.recipes.length === 0 ? (
+          <section className="glass-card"><EmptyState icon="archive" title="Рецептов пока нет" text="Сохрани первую версию в производственной студии." /></section>
         ) : (
-          <div className="recipe-archive-grid">
+          <section className="compact-list glass-card recipe-list">
             {state.production.recipes.map((recipe) => {
               const style = getStyle(recipe.styleId);
               return (
-                <article key={recipe.id} className="recipe-archive-card glass-card">
-                  <div className="recipe-color" style={{ background: style.color }} />
-                  <div className="recipe-version">v{recipe.version}</div>
-                  <span>{recipe.family === 'beer' ? 'ПИВО' : 'СИДР'} · ДЕНЬ {recipe.createdDay}</span>
-                  <h4>{recipe.name}</h4>
-                  <p>{style.name}</p>
-                  <div className="mini-profile"><i style={{ height: `${recipe.sweetness * 16}%` }} /><i style={{ height: `${recipe.acidity * 16}%` }} /><i style={{ height: `${recipe.bitterness * 16}%` }} /><i style={{ height: `${recipe.body * 16}%` }} /><i style={{ height: `${recipe.aroma * 16}%` }} /></div>
-                  <div className="recipe-archive-meta"><span>{recipe.volumeLiters} л</span><span>{recipe.primaryDays + recipe.conditioningDays} дней</span><span>{Math.round(recipe.estimatedCost)}</span></div>
-                </article>
+                <button key={recipe.id} className="compact-list-row" onClick={() => setSelectedRecipe(recipe)}>
+                  <span className="recipe-dot" style={{ background: style.color }} />
+                  <span><strong>{recipe.name}</strong><small>{style.shortName} · v{recipe.version} · день {recipe.createdDay}</small></span>
+                  <span className="recipe-row-meta">{recipe.volumeLiters} л</span>
+                </button>
               );
             })}
-          </div>
-        )}
-      </section>
+          </section>
+        )
+      )}
 
-      <section>
-        <div className="section-title-row"><div><span className="section-kicker">коммерческий архив</span><h3>Закрытые поставки</h3></div><span className="status-chip neutral">{state.world?.contracts.length ?? 0} контрактов</span></div>
-        {(state.world?.sales.length ?? 0) === 0 ? (
-          <div className="empty-row glass-card"><Icon name="contract" /><span><strong>Продаж пока нет</strong><small>Принятые офферы и поставки появятся здесь.</small></span></div>
+      {section === 'sales' && (
+        (state.world?.sales.length ?? 0) === 0 ? (
+          <section className="glass-card"><EmptyState icon="handshake" title="Продаж пока нет" text="Принятые офферы и закрытые поставки появятся здесь." /></section>
         ) : (
-          <div className="commercial-archive-grid">
+          <section className="compact-list glass-card sales-list">
             {state.world?.sales.map((sale) => {
               const outlet = state.world?.outlets.find((item) => item.id === sale.outletId);
               const batch = state.production.batches.find((item) => item.id === sale.batchId);
-              return <article key={sale.id} className="commercial-archive-card glass-card"><div><Icon name="handshake" /><span>День {sale.day}</span></div><h4>{outlet?.name}</h4><p>{batch?.code} · {sale.units} бутылок по {sale.unitPrice.toFixed(2)}</p><strong>{new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(sale.revenue)}</strong></article>;
+              return <button key={sale.id} className="compact-list-row" onClick={() => setSelectedSaleId(sale.id)}><span className="row-icon"><Icon name="contract" /></span><span><strong>{outlet?.name ?? 'Точка'}</strong><small>День {sale.day} · {batch?.code} · {sale.units} бутылок</small></span><span className="sale-value">{formatMoney(sale.revenue)}</span></button>;
             })}
-          </div>
-        )}
-      </section>
+          </section>
+        )
+      )}
 
-      <section className="save-center glass-card">
-        <div className="card-heading"><div><span className="section-kicker">локальное сохранение</span><h3>Управление данными</h3></div><span className="status-chip positive">IndexedDB</span></div>
-        <p>Игра сохраняется автоматически в браузере. Экспорт нужен для резервной копии или переноса на другое устройство.</p>
-        <div className="save-actions">
-          <button className="button secondary" onClick={onExport}>Экспортировать JSON</button>
-          <button className="button ghost" onClick={() => fileInput.current?.click()}>Импортировать</button>
-          <button className="button danger" onClick={onReset}>Начать заново</button>
-        </div>
-        <input ref={fileInput} hidden type="file" accept="application/json" onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) void onImport(file);
-          event.currentTarget.value = '';
-        }} />
-      </section>
+      {section === 'data' && (
+        <section className="data-panel glass-card">
+          <div className="data-status"><div><Icon name="check" /></div><span><strong>Локальное автосохранение</strong><small>IndexedDB · схема {state.schemaVersion}</small></span></div>
+          <p>Экспортируй файл перед очисткой браузера или переносом игры на другое устройство.</p>
+          <div className="stacked-actions">
+            <button className="button primary" onClick={onExport}>Экспортировать сохранение</button>
+            <button className="button secondary" onClick={() => fileInput.current?.click()}>Импортировать JSON</button>
+            <button className="button danger" onClick={onReset}>Удалить прогресс</button>
+          </div>
+          <input ref={fileInput} hidden type="file" accept="application/json" onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void onImport(file);
+            event.currentTarget.value = '';
+          }} />
+        </section>
+      )}
+
+      {selectedRecipe && (
+        <RecipeModal recipe={selectedRecipe} onClose={() => setSelectedRecipe(null)} />
+      )}
+
+      {selectedSale && (
+        <Modal title={state.world?.outlets.find((item) => item.id === selectedSale.outletId)?.name ?? 'Поставка'} kicker={`День ${selectedSale.day}`} onClose={() => setSelectedSaleId(null)}>
+          <div className="sale-modal-value">{formatMoney(selectedSale.revenue)}</div>
+          <div className="detail-grid">
+            <div><span>Объём</span><strong>{selectedSale.units} бут.</strong></div>
+            <div><span>Цена</span><strong>{selectedSale.unitPrice.toFixed(2)}</strong></div>
+            <div><span>Партия</span><strong>{state.production.batches.find((item) => item.id === selectedSale.batchId)?.code ?? '—'}</strong></div>
+            <div><span>Контракт</span><strong>{selectedSale.contractId}</strong></div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
+}
+
+function RecipeModal({ recipe, onClose }: { recipe: SavedRecipe; onClose: () => void }) {
+  const style = getStyle(recipe.styleId);
+  return (
+    <Modal title={recipe.name} kicker={`${recipe.family === 'beer' ? 'Пиво' : 'Сидр'} · версия ${recipe.version}`} onClose={onClose}>
+      <div className="recipe-modal-swatch" style={{ background: style.color }}><span>{style.name}</span></div>
+      <div className="detail-grid">
+        <div><span>Объём</span><strong>{recipe.volumeLiters} л</strong></div>
+        <div><span>Создан</span><strong>день {recipe.createdDay}</strong></div>
+        <div><span>Процесс</span><strong>{recipe.primaryDays + recipe.conditioningDays} дн.</strong></div>
+        <div><span>Стоимость</span><strong>{formatMoney(recipe.estimatedCost)}</strong></div>
+      </div>
+      <div className="profile-details">
+        <Profile label="Сладость" value={recipe.sweetness} />
+        <Profile label="Кислотность" value={recipe.acidity} />
+        <Profile label="Горечь" value={recipe.bitterness} />
+        <Profile label="Тело" value={recipe.body} />
+        <Profile label="Ароматика" value={recipe.aroma} />
+        <Profile label="Оригинальность" value={recipe.originality} />
+      </div>
+    </Modal>
+  );
+}
+
+function Profile({ label, value }: { label: string; value: number }) {
+  return <div><span>{label}</span><div><i style={{ width: `${value * 20}%` }} /></div><strong>{value}</strong></div>;
+}
+
+function formatMoney(value: number): string {
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value);
 }

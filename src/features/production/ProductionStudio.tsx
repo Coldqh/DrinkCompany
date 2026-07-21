@@ -10,10 +10,12 @@ import {
   getStyle,
   getStylesForFamily,
   requiredEquipmentIds,
+  type EquipmentDefinition,
   type ProductFamily,
   type RecipeDraft,
 } from '../../domain/production';
 import { Icon } from '../../ui/Icon';
+import { CompactHeader, MiniStat, Modal, SubTabs } from '../../ui/MobileUI';
 
 interface ProductionStudioProps {
   state: GameState;
@@ -22,9 +24,15 @@ interface ProductionStudioProps {
   onLaunchBatch: (draft: RecipeDraft) => ActionResult;
 }
 
+type ProductionSection = 'line' | 'recipe' | 'launch';
+type RecipeSection = 'identity' | 'profile' | 'process';
+
 export function ProductionStudio({ state, onBuyEquipment, onSaveRecipe, onLaunchBatch }: ProductionStudioProps) {
   const [family, setFamily] = useState<ProductFamily>('beer');
   const [draft, setDraft] = useState<RecipeDraft>(() => createRecipeDraft('beer'));
+  const [section, setSection] = useState<ProductionSection>('line');
+  const [recipeSection, setRecipeSection] = useState<RecipeSection>('identity');
+  const [selectedEquipment, setSelectedEquipment] = useState<EquipmentDefinition | null>(null);
   const [feedback, setFeedback] = useState<ActionResult | null>(null);
   const style = getStyle(draft.styleId);
   const estimatedCost = estimateRecipeCost(draft);
@@ -37,6 +45,7 @@ export function ProductionStudio({ state, onBuyEquipment, onSaveRecipe, onLaunch
   function switchFamily(nextFamily: ProductFamily) {
     setFamily(nextFamily);
     setDraft(createRecipeDraft(nextFamily));
+    setRecipeSection('identity');
     setFeedback(null);
   }
 
@@ -46,79 +55,73 @@ export function ProductionStudio({ state, onBuyEquipment, onSaveRecipe, onLaunch
 
   function handleResult(result: ActionResult) {
     setFeedback(result);
-    window.setTimeout(() => setFeedback(null), 3800);
+    window.setTimeout(() => setFeedback(null), 3200);
+  }
+
+  function buySelected() {
+    if (!selectedEquipment) return;
+    const result = onBuyEquipment(selectedEquipment.id);
+    handleResult(result);
+    if (result.ok) setSelectedEquipment(null);
   }
 
   return (
-    <div className="production-layout">
+    <div className="screen-stack production-compact">
       {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
 
-      <section className="studio-hero glass-card">
-        <div>
-          <span className="section-kicker">production studio</span>
-          <h2>Собери линию. Настрой вкус. Запусти партию.</h2>
-          <p>Каждое решение меняет себестоимость, риск дефектов, стиль и будущую реакцию рынка.</p>
-        </div>
-        <div className="studio-readout">
-          <span>Свободно линий</span>
-          <strong>{Math.max(0, propertyCapacity - activeBatches)}</strong>
-          <small>{activeBatches} занято</small>
-        </div>
+      <CompactHeader
+        kicker="Производственная студия"
+        title={family === 'beer' ? 'Пивная линия' : 'Сидровая линия'}
+        meta={`${Math.max(0, propertyCapacity - activeBatches)} свободных места · ${ready ? 'линия готова' : 'не хватает оборудования'}`}
+        action={<div className="family-toggle"><button className={family === 'beer' ? 'active' : ''} onClick={() => switchFamily('beer')}><Icon name="beer" /></button><button className={family === 'cider' ? 'active' : ''} onClick={() => switchFamily('cider')}><Icon name="apple" /></button></div>}
+      />
+
+      <section className="mini-stat-grid three">
+        <MiniStat label="Стиль" value={style.shortName} note={`${styleFit}% попадание`} tone="warm" />
+        <MiniStat label="Запуск" value={formatMoney(estimatedCost)} note={`${draft.volumeLiters} л`} tone="blue" />
+        <MiniStat label="Готовность" value={`День ${state.day + draft.primaryDays + draft.conditioningDays}`} note={`${draft.primaryDays + draft.conditioningDays} дней`} tone="green" />
       </section>
 
-      <section className="equipment-section">
-        <div className="section-title-row">
-          <div><span className="section-kicker">оборудование</span><h3>Производственная линия</h3></div>
-          <span className={`status-chip ${ready ? 'positive' : 'warning'}`}>{ready ? 'Линия готова' : 'Нужны модули'}</span>
-        </div>
-        <div className="equipment-rail">
-          {equipmentCatalog.map((item) => {
+      <SubTabs value={section} onChange={setSection} options={[{ id: 'line', label: 'Линия' }, { id: 'recipe', label: 'Рецепт' }, { id: 'launch', label: 'Запуск' }]} />
+
+      {section === 'line' && (
+        <section className="compact-list glass-card">
+          {equipmentCatalog.filter((item) => item.family === family || item.family === 'shared').map((item) => {
             const owned = state.production.equipmentIds.includes(item.id);
-            const relevant = item.family === family || item.family === 'shared';
             const requiredForFamily = required.includes(item.id);
             return (
-              <article key={item.id} className={`equipment-card glass-card ${owned ? 'owned' : ''} ${!relevant ? 'dimmed' : ''}`}>
-                <div className="equipment-visual"><Icon name={item.icon} /></div>
-                <div className="equipment-tags"><span>{item.category}</span>{requiredForFamily && <b>обязательно</b>}</div>
-                <h4>{item.name}</h4>
-                <p>{item.summary}</p>
-                <div className="equipment-meta"><span>Точность {item.precision}/5</span>{item.capacityLiters > 0 && <span>{item.capacityLiters} л</span>}</div>
-                <button className={`button ${owned ? 'installed' : 'secondary'}`} disabled={owned} onClick={() => handleResult(onBuyEquipment(item.id))}>
-                  {owned ? <><Icon name="check" /> Установлено</> : <>{formatMoney(item.cost)} <Icon name="arrow" /></>}
-                </button>
-              </article>
+              <button key={item.id} className="equipment-row compact-list-row" onClick={() => setSelectedEquipment(item)}>
+                <span className={`row-icon ${owned ? 'owned' : ''}`}><Icon name={item.icon} /></span>
+                <span><strong>{item.name}</strong><small>{item.category} · {item.capacityLiters > 0 ? `${item.capacityLiters} л` : 'контроль качества'}</small></span>
+                <span className={`row-status ${owned ? 'positive' : requiredForFamily ? 'required' : ''}`}>{owned ? 'готово' : requiredForFamily ? formatMoney(item.cost) : 'опция'}</span>
+              </button>
             );
           })}
-        </div>
-      </section>
+          <div className={`line-readiness ${ready ? 'ready' : ''}`}><Icon name={ready ? 'check' : 'warning'} /><span><strong>{ready ? 'Можно запускать партию' : 'Линия ещё не собрана'}</strong><small>{ready ? 'Основные производственные модули установлены.' : 'Открой обязательные модули и купи недостающее оборудование.'}</small></span></div>
+        </section>
+      )}
 
-      <section className="recipe-studio glass-card">
-        <div className="recipe-header">
-          <div><span className="section-kicker">редактор рецептуры</span><h3>Новая партия</h3></div>
-          <div className="family-switch">
-            <button className={family === 'beer' ? 'active' : ''} onClick={() => switchFamily('beer')}><Icon name="beer" />Пиво</button>
-            <button className={family === 'cider' ? 'active' : ''} onClick={() => switchFamily('cider')}><Icon name="apple" />Сидр</button>
-          </div>
-        </div>
+      {section === 'recipe' && (
+        <section className="recipe-workspace glass-card">
+          <SubTabs value={recipeSection} onChange={setRecipeSection} options={[{ id: 'identity', label: 'Основа' }, { id: 'profile', label: 'Вкус' }, { id: 'process', label: 'Процесс' }]} />
 
-        <div className="recipe-grid">
-          <div className="recipe-controls">
-            <label className="field rich-field">
-              <span>Название рецепта</span>
-              <input value={draft.name} onChange={(event) => update('name', event.target.value)} maxLength={36} />
-            </label>
-
-            <div className="style-picker">
-              {getStylesForFamily(family).map((item) => (
-                <button key={item.id} className={draft.styleId === item.id ? 'active' : ''} onClick={() => setDraft((current) => adaptDraftToStyle(current, item.id))}>
-                  <i style={{ background: item.color }} />
-                  <span><strong>{item.shortName}</strong><small>{item.description}</small></span>
-                </button>
-              ))}
+          {recipeSection === 'identity' && (
+            <div className="recipe-pane">
+              <label className="field rich-field"><span>Название рецепта</span><input value={draft.name} onChange={(event) => update('name', event.target.value)} maxLength={36} /></label>
+              <div className="compact-style-list">
+                {getStylesForFamily(family).map((item) => (
+                  <button key={item.id} className={draft.styleId === item.id ? 'active' : ''} onClick={() => setDraft((current) => adaptDraftToStyle(current, item.id))}>
+                    <i style={{ background: item.color }} />
+                    <span><strong>{item.shortName}</strong><small>{item.description}</small></span>
+                    {draft.styleId === item.id && <Icon name="check" />}
+                  </button>
+                ))}
+              </div>
             </div>
+          )}
 
-            <div className="control-group">
-              <div className="control-group-title"><span>Вкусовой профиль</span><small>1 — низко · 5 — высоко</small></div>
+          {recipeSection === 'profile' && (
+            <div className="recipe-pane compact-controls">
               <RangeControl label="Сладость" value={draft.sweetness} min={1} max={5} onChange={(value) => update('sweetness', value)} />
               <RangeControl label="Кислотность" value={draft.acidity} min={1} max={5} onChange={(value) => update('acidity', value)} />
               <RangeControl label="Горечь / танины" value={draft.bitterness} min={1} max={5} onChange={(value) => update('bitterness', value)} />
@@ -126,51 +129,56 @@ export function ProductionStudio({ state, onBuyEquipment, onSaveRecipe, onLaunch
               <RangeControl label="Ароматика" value={draft.aroma} min={1} max={5} onChange={(value) => update('aroma', value)} />
               <RangeControl label="Оригинальность" value={draft.originality} min={1} max={5} onChange={(value) => update('originality', value)} />
             </div>
+          )}
 
-            <div className="control-group process-controls">
-              <div className="control-group-title"><span>Технологический режим</span><small>точные решения</small></div>
+          {recipeSection === 'process' && (
+            <div className="recipe-pane compact-controls">
               <RangeControl label="Объём" value={draft.volumeLiters} min={40} max={240} step={10} suffix=" л" onChange={(value) => update('volumeLiters', value)} />
-              <RangeControl label="Температура ферментации" value={draft.processTemperature} min={style.processTemperatureRange[0]} max={style.processTemperatureRange[1]} suffix="°C" onChange={(value) => update('processTemperature', value)} />
+              <RangeControl label="Температура" value={draft.processTemperature} min={style.processTemperatureRange[0]} max={style.processTemperatureRange[1]} suffix="°C" onChange={(value) => update('processTemperature', value)} />
               <RangeControl label="Основной этап" value={draft.primaryDays} min={style.primaryDaysRange[0]} max={style.primaryDaysRange[1]} suffix=" дн." onChange={(value) => update('primaryDays', value)} />
               <RangeControl label="Созревание" value={draft.conditioningDays} min={style.conditioningDaysRange[0]} max={style.conditioningDaysRange[1]} suffix=" дн." onChange={(value) => update('conditioningDays', value)} />
-              <RangeControl label="Обработка и контроль" value={draft.treatment} min={1} max={5} onChange={(value) => update('treatment', value)} />
+              <RangeControl label="Контроль и обработка" value={draft.treatment} min={1} max={5} onChange={(value) => update('treatment', value)} />
             </div>
+          )}
+        </section>
+      )}
+
+      {section === 'launch' && (
+        <section className="launch-card glass-card">
+          <div className="launch-visual" style={{ '--drink-color': style.color } as React.CSSProperties}><div><i /><i /><i /></div><span>{family === 'beer' ? 'BEER' : 'CIDER'}</span></div>
+          <div className="launch-copy"><span>{style.name}</span><h3>{draft.name || 'Без названия'}</h3><p>{draft.volumeLiters} л · {draft.primaryDays + draft.conditioningDays} дней · {styleFit}% попадание в стиль</p></div>
+          <div className="launch-numbers">
+            <div><span>Запуск</span><strong>{formatMoney(estimatedCost)}</strong></div>
+            <div><span>Себестоимость 0,5 л</span><strong>{(estimatedCost / Math.max(1, draft.volumeLiters / 0.5)).toFixed(2)}</strong></div>
+            <div><span>Остаток денег</span><strong>{formatMoney(state.finance.cash - estimatedCost)}</strong></div>
           </div>
+          {!ready && <div className="inline-warning"><Icon name="warning" /><span>Сначала собери обязательную линию во вкладке «Линия».</span></div>}
+          <div className="stacked-actions">
+            <button className="button secondary" onClick={() => handleResult(onSaveRecipe(draft))}>Сохранить версию</button>
+            <button className="button primary glow" onClick={() => handleResult(onLaunchBatch(draft))} disabled={!ready || state.finance.cash < estimatedCost}>Запустить партию <Icon name="arrow" /></button>
+          </div>
+        </section>
+      )}
 
-          <aside className="recipe-preview">
-            <div className="liquid-preview" style={{ '--liquid-color': style.color } as React.CSSProperties}>
-              <div className="glass-shape"><div className="preview-liquid"><span /><span /><span /></div></div>
-              <div className="preview-title"><span>{family === 'beer' ? 'BATCH / BEER' : 'BATCH / CIDER'}</span><strong>{draft.name || 'Без названия'}</strong><small>{style.name}</small></div>
-            </div>
-
-            <div className="profile-board">
-              <div className="profile-score"><span>Попадание в стиль</span><strong>{styleFit}%</strong></div>
-              <ProfileLine label="Сладость" value={draft.sweetness} target={style.target.sweetness} />
-              <ProfileLine label="Кислотность" value={draft.acidity} target={style.target.acidity} />
-              <ProfileLine label="Горечь" value={draft.bitterness} target={style.target.bitterness} />
-              <ProfileLine label="Тело" value={draft.body} target={style.target.body} />
-              <ProfileLine label="Аромат" value={draft.aroma} target={style.target.aroma} />
-            </div>
-
-            <div className="recipe-economics">
-              <div><span>Сырьё и запуск</span><strong>{formatMoney(estimatedCost)}</strong></div>
-              <div><span>Готовность</span><strong>день {state.day + draft.primaryDays + draft.conditioningDays}</strong></div>
-              <div><span>Ориентир себестоимости</span><strong>{(estimatedCost / Math.max(1, draft.volumeLiters / 0.5)).toFixed(2)} / бутылка</strong></div>
-            </div>
-
-            {!ready && (
-              <div className="inline-warning"><Icon name="warning" /><span>Для запуска установи {family === 'beer' ? 'варочный порядок' : 'яблочный пресс'} и ферментеры.</span></div>
-            )}
-
-            <div className="recipe-actions">
-              <button className="button ghost" onClick={() => handleResult(onSaveRecipe(draft))}>Сохранить версию</button>
-              <button className="button primary glow" onClick={() => handleResult(onLaunchBatch(draft))} disabled={!ready || state.finance.cash < estimatedCost}>
-                Запустить партию <Icon name="arrow" />
-              </button>
-            </div>
-          </aside>
-        </div>
-      </section>
+      {selectedEquipment && (
+        <Modal
+          title={selectedEquipment.name}
+          kicker={selectedEquipment.category}
+          onClose={() => setSelectedEquipment(null)}
+          footer={state.production.equipmentIds.includes(selectedEquipment.id)
+            ? <button className="button installed" disabled><Icon name="check" />Установлено</button>
+            : <button className="button primary" onClick={buySelected}>Купить за {formatMoney(selectedEquipment.cost)}</button>}
+        >
+          <div className="equipment-modal-visual"><Icon name={selectedEquipment.icon} /></div>
+          <p className="modal-description">{selectedEquipment.summary}</p>
+          <div className="detail-grid">
+            <div><span>Точность</span><strong>{selectedEquipment.precision}/5</strong></div>
+            <div><span>Вместимость</span><strong>{selectedEquipment.capacityLiters > 0 ? `${selectedEquipment.capacityLiters} л` : '—'}</strong></div>
+            <div><span>Назначение</span><strong>{selectedEquipment.benefit}</strong></div>
+            <div><span>Статус</span><strong>{required.includes(selectedEquipment.id) ? 'обязательно' : 'улучшение'}</strong></div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -178,20 +186,10 @@ export function ProductionStudio({ state, onBuyEquipment, onSaveRecipe, onLaunch
 function RangeControl({ label, value, min, max, step = 1, suffix = '', onChange }: { label: string; value: number; min: number; max: number; step?: number; suffix?: string; onChange: (value: number) => void }) {
   const progress = ((value - min) / Math.max(1, max - min)) * 100;
   return (
-    <label className="range-control">
+    <label className="compact-range">
       <div><span>{label}</span><output>{value}{suffix}</output></div>
       <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} style={{ '--range-progress': `${progress}%` } as React.CSSProperties} />
     </label>
-  );
-}
-
-function ProfileLine({ label, value, target }: { label: string; value: number; target: number }) {
-  return (
-    <div className="profile-line">
-      <span>{label}</span>
-      <div><i style={{ width: `${value * 20}%` }} /><b style={{ left: `${target * 20}%` }} /></div>
-      <strong>{value}</strong>
-    </div>
   );
 }
 
