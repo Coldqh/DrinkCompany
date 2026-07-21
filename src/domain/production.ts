@@ -111,7 +111,7 @@ export const PRODUCT_STYLES: ProductStyleDefinition[] = [
     name: 'Modern Pale Ale',
     shortName: 'Pale Ale',
     description: 'Сухое, ароматное пиво с заметным хмелем и чистой ферментацией.',
-    color: '#efb24e',
+    color: '#c68a4b',
     baseCostPerLiter: 1.72,
     defaultProcessTemperature: 19,
     processTemperatureRange: [15, 24],
@@ -127,7 +127,7 @@ export const PRODUCT_STYLES: ProductStyleDefinition[] = [
     name: 'Dark Porter',
     shortName: 'Porter',
     description: 'Плотный тёмный профиль, обжаренное зерно, умеренная горечь и длинное тело.',
-    color: '#8e5a3c',
+    color: '#9d633d',
     baseCostPerLiter: 1.94,
     defaultProcessTemperature: 20,
     processTemperatureRange: [16, 24],
@@ -143,7 +143,7 @@ export const PRODUCT_STYLES: ProductStyleDefinition[] = [
     name: 'Wheat Beer',
     shortName: 'Wheat',
     description: 'Мягкое пшеничное пиво с яркой дрожжевой ароматикой и лёгкой кислотностью.',
-    color: '#f2d78a',
+    color: '#d0a163',
     baseCostPerLiter: 1.64,
     defaultProcessTemperature: 21,
     processTemperatureRange: [17, 25],
@@ -159,7 +159,7 @@ export const PRODUCT_STYLES: ProductStyleDefinition[] = [
     name: 'Dry Orchard Cider',
     shortName: 'Dry Cider',
     description: 'Сухой яблочный сидр с высокой свежестью, кислотностью и чистым послевкусием.',
-    color: '#d6c361',
+    color: '#b9934f',
     baseCostPerLiter: 1.48,
     defaultProcessTemperature: 16,
     processTemperatureRange: [10, 22],
@@ -175,7 +175,7 @@ export const PRODUCT_STYLES: ProductStyleDefinition[] = [
     name: 'Bittersweet Cider',
     shortName: 'Bittersweet',
     description: 'Структурный сидр с танинами, мягкой сладостью и выраженным яблочным телом.',
-    color: '#c98c43',
+    color: '#ad743f',
     baseCostPerLiter: 1.69,
     defaultProcessTemperature: 15,
     processTemperatureRange: [9, 21],
@@ -191,7 +191,7 @@ export const PRODUCT_STYLES: ProductStyleDefinition[] = [
     name: 'Wild Farmhouse Cider',
     shortName: 'Wild Cider',
     description: 'Рискованный фермерский стиль: сложная ферментация, высокая выразительность и шанс дефектов.',
-    color: '#a88743',
+    color: '#8e6b3d',
     baseCostPerLiter: 1.57,
     defaultProcessTemperature: 18,
     processTemperatureRange: [10, 26],
@@ -283,11 +283,11 @@ export function createBatch(
   day: number,
   batchNumber: number,
   equipmentPrecision: number,
-  sourcing: { rawMaterials: BatchIngredientUse[]; rawMaterialCost: number; qualityScore: number; flavorImpact: Partial<FlavorProfile> },
+  sourcing: { rawMaterials: BatchIngredientUse[]; rawMaterialCost: number; qualityScore: number; flavorImpact: Partial<FlavorProfile>; environmentModifier?: number },
 ): BatchState {
   const processCost = estimateProcessCost(recipe);
   const productionCost = roundMoney(processCost + sourcing.rawMaterialCost);
-  const quality = calculateQuality(recipe, equipmentPrecision, day + batchNumber, sourcing.qualityScore, sourcing.flavorImpact);
+  const quality = calculateQuality(recipe, equipmentPrecision, day + batchNumber, sourcing.qualityScore, sourcing.flavorImpact, sourcing.environmentModifier ?? 0);
   const totalDays = recipe.primaryDays + recipe.conditioningDays;
   return {
     id: `batch-${day}-${batchNumber}`,
@@ -336,9 +336,9 @@ export function tasteBatch(batch: BatchState, day: number, hasLabKit: boolean): 
   return { ...batch, status: 'tasted', tasting };
 }
 
-export function packageBatch(batch: BatchState, packagingMaterials: BatchIngredientUse[] = []): BatchState {
+export function packageBatch(batch: BatchState, packagingMaterials: BatchIngredientUse[] = [], efficiency = 0.94): BatchState {
   if (batch.status !== 'tasted') throw new Error('Сначала продегустируй партию');
-  const packagedUnits = Math.max(0, Math.floor((batch.recipe.volumeLiters * 0.94) / 0.5));
+  const packagedUnits = Math.max(0, Math.floor((batch.recipe.volumeLiters * Math.max(0.86, Math.min(0.99, efficiency))) / 0.5));
   const packagingCost = packagingMaterials.length > 0
     ? roundMoney(packagingMaterials.reduce((sum, item) => sum + item.totalCost, 0))
     : estimatePackagingCost(batch);
@@ -376,7 +376,7 @@ function validateRecipe(draft: RecipeDraft): void {
   }
 }
 
-function calculateQuality(recipe: SavedRecipe, equipmentPrecision: number, seed: number, supplyQuality = 75, flavorImpact: Partial<FlavorProfile> = {}): QualityProfile {
+function calculateQuality(recipe: SavedRecipe, equipmentPrecision: number, seed: number, supplyQuality = 75, flavorImpact: Partial<FlavorProfile> = {}, environmentModifier = 0): QualityProfile {
   const style = getStyle(recipe.styleId);
   const temperatureCenter = style.defaultProcessTemperature;
   const temperatureDeviation = Math.abs(recipe.processTemperature - temperatureCenter);
@@ -392,11 +392,11 @@ function calculateQuality(recipe: SavedRecipe, equipmentPrecision: number, seed:
   const supplyBonus = (supplyQuality - 75) * 0.28;
   const flavorStrength = Object.values(flavorImpact).reduce((sum, value) => sum + Math.abs(value ?? 0), 0);
   const defectRisk = clamp(Math.round(
-    10 + temperatureDeviation * 7 + durationDeviation * 3 + Math.max(0, recipe.originality - 3) * 5 - equipmentPrecision * 4 - recipe.treatment * 2 - supplyBonus * 0.55 + Math.max(0, noise),
+    10 + temperatureDeviation * 7 + durationDeviation * 3 + Math.max(0, recipe.originality - 3) * 5 - equipmentPrecision * 4 - recipe.treatment * 2 - supplyBonus * 0.55 - environmentModifier * 0.85 + Math.max(0, noise),
   ), 1, 72);
-  const technicalPurity = clamp(Math.round(89 - defectRisk * 0.65 + equipmentPrecision * 2 + recipe.treatment * 1.5 + supplyBonus + noise), 18, 99);
-  const styleFit = clamp(Math.round(96 - profileDistance * 16 - temperatureDeviation * 4 - durationDeviation * 2), 10, 99);
-  const balance = clamp(Math.round(92 - balanceSpread(recipe) * 9 - defectRisk * 0.18 + supplyBonus * 0.45 - flavorStrength * 1.4 + noise * 0.4), 12, 98);
+  const technicalPurity = clamp(Math.round(89 - defectRisk * 0.65 + equipmentPrecision * 2 + recipe.treatment * 1.5 + supplyBonus + environmentModifier * 1.15 + noise), 18, 99);
+  const styleFit = clamp(Math.round(96 - profileDistance * 16 - temperatureDeviation * 4 - durationDeviation * 2 + environmentModifier * 0.35), 10, 99);
+  const balance = clamp(Math.round(92 - balanceSpread(recipe) * 9 - defectRisk * 0.18 + supplyBonus * 0.45 + environmentModifier * 0.45 - flavorStrength * 1.4 + noise * 0.4), 12, 98);
   const intensity = clamp(Math.round(35 + average([recipe.bitterness, recipe.body, recipe.aroma, recipe.acidity]) * 11 + noise), 20, 98);
   const complexity = clamp(Math.round(28 + recipe.originality * 10 + recipe.aroma * 5 + recipe.conditioningDays * 0.45 - defectRisk * 0.15 + flavorStrength * 5 + supplyBonus * 0.25 + noise), 12, 98);
   const cohesion = clamp(Math.round(88 - profileDistance * 11 - Math.max(0, recipe.originality - 3) * 4 - defectRisk * 0.2 + recipe.treatment * 2 + noise * 0.3), 8, 98);

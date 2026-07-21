@@ -2,12 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { equipmentCatalog } from '../data/productionCatalog';
 import {
   acceptMarketOffer,
+  cleanProductionFacility,
+  expandFacilityRoom,
   advanceDay,
   fulfillRepeatOrder,
   migrateGameState,
   orderSupplies,
   packageProductionBatch,
   purchaseEquipment,
+  queueProductionRecipe,
+  saveRecipe,
   submitMarketProposal,
   startCompany,
   startProductionBatch,
@@ -16,6 +20,7 @@ import {
   type PropertyDefinition,
 } from './game';
 import { createRecipeDraft } from './production';
+import { parseGameState } from '../infrastructure/gameStateRepository';
 
 const property: PropertyDefinition = {
   id: 'property-test',
@@ -56,9 +61,10 @@ describe('startCompany', () => {
   it('создаёт рабочее состояние и списывает стоимость объекта', () => {
     const state = createCompany();
     expect(state.phase).toBe('operating');
-    expect(state.schemaVersion).toBe(5);
+    expect(state.schemaVersion).toBe(6);
     expect(state.finance.cash).toBe(100_000);
-    expect(state.finance.dailyFixedCost).toBe(180);
+    expect(state.finance.dailyFixedCost).toBeGreaterThan(180);
+    expect(state.facility?.rooms.production).toBe(1);
     expect(state.company.name).toBe('North Glass');
     expect(state.world?.companies.length).toBeGreaterThanOrEqual(10);
     expect(state.world?.outlets).toHaveLength(12);
@@ -111,7 +117,48 @@ describe('production cycle', () => {
     const state = createCompany();
     const next = advanceDay(state);
     expect(next.day).toBe(2);
-    expect(next.finance.cash).toBe(state.finance.cash - 180);
+    expect(next.finance.cash).toBe(state.finance.cash - state.finance.dailyFixedCost);
+  });
+});
+
+
+describe('facility growth', () => {
+  it('расширяет ферментационную зону и повышает ежедневные расходы', () => {
+    const state = createCompany();
+    const capacityBefore = state.facility?.rooms.fermentation ?? 0;
+    const costBefore = state.finance.dailyFixedCost;
+    const expanded = expandFacilityRoom(state, 'fermentation');
+    expect(expanded.facility?.rooms.fermentation).toBe(capacityBefore + 1);
+    expect(expanded.finance.dailyFixedCost).toBeGreaterThan(costBefore);
+    expect(expanded.finance.facilitySpend).toBeGreaterThan(0);
+  });
+
+  it('ставит сохранённый рецепт в очередь', () => {
+    let state = createCompany();
+    state = saveRecipe(state, { ...createRecipeDraft('beer'), name: 'Queue Test' });
+    const recipe = state.production.recipes[0];
+    if (!recipe) throw new Error('recipe missing');
+    state = queueProductionRecipe(state, recipe.id);
+    expect(state.production.queue).toHaveLength(1);
+    expect(state.production.queue[0]?.recipeId).toBe(recipe.id);
+  });
+
+  it('санитарная смена восстанавливает чистоту', () => {
+    const state = createCompany();
+    if (!state.facility) throw new Error('facility missing');
+    const dirty = { ...state, facility: { ...state.facility, sanitation: 42 } };
+    const cleaned = cleanProductionFacility(dirty);
+    expect(cleaned.facility?.sanitation).toBeGreaterThan(42);
+    expect(cleaned.finance.maintenanceSpend).toBeGreaterThan(0);
+  });
+});
+
+describe('save parsing', () => {
+  it('принимает текущее сохранение schemaVersion 6', () => {
+    const state = createCompany();
+    const parsed = parseGameState(JSON.stringify(state));
+    expect(parsed.schemaVersion).toBe(6);
+    expect(parsed.facility).not.toBeNull();
   });
 });
 
@@ -131,7 +178,7 @@ describe('save migration', () => {
     };
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(6);
     expect(migrated.production.batches).toEqual([]);
     expect(migrated.company.completedBatches).toBe(0);
     expect(migrated.supply.inventory).toEqual([]);
@@ -149,7 +196,7 @@ describe('save migration', () => {
     delete world.nextRepeatOrderNumber;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(6);
     expect(migrated.world?.repeatOrders).toEqual([]);
     expect(migrated.world?.demandSignals.length).toBeGreaterThan(0);
     expect(migrated.supply.offers.length).toBeGreaterThan(0);
@@ -169,7 +216,7 @@ describe('save migration', () => {
     delete finance.unitsSold;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(6);
     expect(migrated.world?.outlets).toHaveLength(12);
     expect(migrated.finance.salesRevenue).toBe(0);
   });

@@ -53,8 +53,8 @@ export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onOpe
 
       <section className="mini-stat-grid">
         <button onClick={() => setDetail('finance')}><MiniStat label="Баланс" value={formatMoney(state.finance.cash)} note={`−${formatMoney(state.finance.dailyFixedCost)}/день`} tone="warm" /></button>
-        <button onClick={() => setDetail('facility')}><MiniStat label="Линия" value={`${state.production.equipmentIds.length}/5`} note={formatMoney(installedValue)} tone="blue" /></button>
-        <button onClick={onOpenBatches}><MiniStat label="Склад" value={`${stockUnits}`} note={`${readyCount} ждут решения`} tone="green" /></button>
+        <button onClick={() => setDetail('facility')}><MiniStat label="Объект" value={`ур. ${state.facility?.tier ?? 1}`} note={`${Math.round(state.facility?.sanitation ?? 0)}% чистота`} tone="warm" /></button>
+        <button onClick={onOpenBatches}><MiniStat label="Склад" value={`${stockUnits}`} note={`${readyCount} ждут решения`} tone="warm" /></button>
         <button onClick={() => setDetail('market')}><MiniStat label="Выручка" value={formatMoney(state.finance.salesRevenue)} note={`${state.finance.unitsSold} продано`} /></button>
       </section>
 
@@ -138,6 +138,8 @@ export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onOpe
             <Detail label="Ежедневные расходы" value={formatMoney(state.finance.dailyFixedCost)} />
             <Detail label="Оборудование" value={formatMoney(state.finance.equipmentSpend)} />
             <Detail label="Производство" value={formatMoney(state.finance.productionSpend)} />
+            <Detail label="Расширение" value={formatMoney(state.finance.facilitySpend)} />
+            <Detail label="Обслуживание" value={formatMoney(state.finance.maintenanceSpend)} />
             <Detail label="Выручка" value={formatMoney(state.finance.salesRevenue)} />
             <Detail label="Товарный запас" value={formatMoney(state.finance.packagedInventoryValue)} />
           </div>
@@ -147,10 +149,12 @@ export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onOpe
       {detail === 'facility' && (
         <Modal title={property?.name ?? 'Производственная база'} kicker={region?.name ?? 'Регион'} onClose={() => setDetail(null)} footer={<button className="button primary" onClick={() => { setDetail(null); onOpenProduction(); }}>Открыть цех</button>}>
           <div className="detail-grid">
-            <Detail label="Вместимость" value={`${property?.capacity ?? 0} партии`} />
-            <Detail label="Расходы в день" value={formatMoney(property?.dailyCost ?? 0)} />
+            <Detail label="Активные линии" value={`${state.facility?.rooms.fermentation ?? property?.capacity ?? 0}`} />
+            <Detail label="Расходы в день" value={formatMoney(state.finance.dailyFixedCost)} />
             <Detail label="Установлено" value={`${state.production.equipmentIds.length} модулей`} />
             <Detail label="Стоимость линии" value={formatMoney(installedValue)} />
+            <Detail label="Площадь" value={`${state.facility?.areaSquareMeters ?? 0} м²`} />
+            <Detail label="Чистота" value={`${Math.round(state.facility?.sanitation ?? 0)}/100`} />
           </div>
           <div className="modal-list">
             {equipmentCatalog.map((item) => <div key={item.id}><span>{item.name}</span><b>{state.production.equipmentIds.includes(item.id) ? 'установлено' : 'не куплено'}</b></div>)}

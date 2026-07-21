@@ -4,6 +4,9 @@ import { properties } from '../data/catalog';
 import {
   acceptMarketOffer,
   createSupplierAgreement,
+  cleanProductionFacility,
+  expandFacilityRoom,
+  expandFacilityUtility,
   advanceDay,
   createInitialState,
   declineMarketOffer,
@@ -13,15 +16,20 @@ import {
   packageProductionBatch,
   orderSupplies,
   purchaseEquipment,
+  queueProductionRecipe,
+  removeQueuedRecipe,
+  serviceProductionEquipment,
   saveRecipe,
   startCompany,
   startProductionBatch,
+  upgradeProductionEquipment,
   submitMarketProposal,
   tasteProductionBatch,
   type GameState,
   type NewGameSelection,
 } from '../domain/game';
 import type { RecipeDraft } from '../domain/production';
+import type { FacilityRoomId, FacilityUtilityId } from '../domain/facility';
 import type { IngredientCategory } from '../data/supplyCatalog';
 import type { ProposalInput } from '../domain/market';
 import { loadGameState, parseGameState, saveGameState, serializeGameState } from '../infrastructure/gameStateRepository';
@@ -53,6 +61,13 @@ export interface GameController {
   fulfillOrder: (orderId: string, batchId: string) => ActionResult;
   orderSupply: (offerId: string, quantity: number) => ActionResult;
   signSupplier: (supplierId: string) => ActionResult;
+  expandRoom: (roomId: FacilityRoomId) => ActionResult;
+  expandUtility: (utilityId: FacilityUtilityId) => ActionResult;
+  cleanFacility: () => ActionResult;
+  serviceEquipment: (equipmentId: string) => ActionResult;
+  upgradeEquipment: (equipmentId: string) => ActionResult;
+  queueRecipe: (recipeId: string) => ActionResult;
+  removeQueue: (queueId: string) => ActionResult;
 }
 
 export function useGameState(): GameController {
@@ -168,6 +183,37 @@ export function useGameState(): GameController {
     perform((current) => createSupplierAgreement(current, supplierId), 'Постоянный договор подписан')
   ), [perform]);
 
+
+  const expandRoom = useCallback((roomId: FacilityRoomId) => (
+    perform((current) => expandFacilityRoom(current, roomId), 'Помещение расширено')
+  ), [perform]);
+
+  const expandUtility = useCallback((utilityId: FacilityUtilityId) => (
+    perform((current) => expandFacilityUtility(current, utilityId), 'Инфраструктура улучшена')
+  ), [perform]);
+
+  const cleanFacility = useCallback(() => (
+    perform((current) => cleanProductionFacility(current), 'Санитарная смена завершена')
+  ), [perform]);
+
+  const serviceEquipment = useCallback((equipmentId: string) => {
+    const equipment = getEquipment(equipmentId);
+    return perform((current) => serviceProductionEquipment(current, equipment), `${equipment.name} обслужено`);
+  }, [perform]);
+
+  const upgradeEquipment = useCallback((equipmentId: string) => {
+    const equipment = getEquipment(equipmentId);
+    return perform((current) => upgradeProductionEquipment(current, equipment), `${equipment.name} модернизировано`);
+  }, [perform]);
+
+  const queueRecipe = useCallback((recipeId: string) => (
+    perform((current) => queueProductionRecipe(current, recipeId), 'Рецепт добавлен в очередь')
+  ), [perform]);
+
+  const removeQueue = useCallback((queueId: string) => (
+    perform((current) => removeQueuedRecipe(current, queueId), 'Позиция удалена из очереди')
+  ), [perform]);
+
   const reset = useCallback(() => replaceState(createInitialState()), [replaceState]);
 
   const exportSave = useCallback(() => {
@@ -208,5 +254,12 @@ export function useGameState(): GameController {
     fulfillOrder,
     orderSupply,
     signSupplier,
+    expandRoom,
+    expandUtility,
+    cleanFacility,
+    serviceEquipment,
+    upgradeEquipment,
+    queueRecipe,
+    removeQueue,
   };
 }

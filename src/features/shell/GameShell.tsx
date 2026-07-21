@@ -65,6 +65,13 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
             onLaunchBatch={game.launchBatch}
             onOrderSupply={game.orderSupply}
             onSignSupplier={game.signSupplier}
+            onExpandRoom={game.expandRoom}
+            onExpandUtility={game.expandUtility}
+            onCleanFacility={game.cleanFacility}
+            onServiceEquipment={game.serviceEquipment}
+            onUpgradeEquipment={game.upgradeEquipment}
+            onQueueRecipe={game.queueRecipe}
+            onRemoveQueue={game.removeQueue}
           />
         )}
         {tab === 'batches' && (
