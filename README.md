@@ -26,6 +26,21 @@ npm run lint
 npm run build
 ```
 
+## GitHub Pages
+
+Workflow `.github/workflows/deploy-pages.yml` при каждом push в `main`:
+
+1. устанавливает зависимости через `npm ci`;
+2. запускает тесты и статическую проверку;
+3. собирает приложение в `dist`;
+4. публикует сборку через GitHub Pages.
+
+Один раз открой в репозитории **Settings → Pages** и выбери **Source: GitHub Actions**.
+
+Адрес проекта после успешного развёртывания:
+
+`https://coldqh.github.io/DrinkCompany/`
+
 ## Текущий вертикальный срез
 
 - создание компании;
