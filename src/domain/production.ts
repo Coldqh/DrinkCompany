@@ -1,3 +1,4 @@
+import type { BatchIngredientUse } from './supply';
 export type ProductFamily = 'beer' | 'cider';
 export type BatchStatus = 'fermenting' | 'conditioning' | 'ready' | 'tasted' | 'packaged' | 'discarded';
 
@@ -91,6 +92,11 @@ export interface BatchState {
   readyDay: number;
   progress: number;
   productionCost: number;
+  rawMaterialCost: number;
+  processCost: number;
+  supplyQuality: number;
+  rawMaterials: BatchIngredientUse[];
+  packagingMaterials: BatchIngredientUse[];
   packagingCost: number;
   packagedUnits: number;
   availableUnits: number;
@@ -250,11 +256,17 @@ export function estimateRecipeCost(draft: RecipeDraft): number {
   return roundMoney(draft.volumeLiters * style.baseCostPerLiter * treatmentMultiplier * originalityMultiplier + conditioningCost);
 }
 
+export function estimateProcessCost(draft: RecipeDraft): number {
+  const treatmentCost = draft.volumeLiters * draft.treatment * 0.045;
+  const conditioningCost = draft.conditioningDays * draft.volumeLiters * 0.0025;
+  return roundMoney(38 + treatmentCost + conditioningCost);
+}
+
 export function estimatePackagingCost(batch: BatchState): number {
   return roundMoney(Math.floor(batch.recipe.volumeLiters / 0.5) * 0.42);
 }
 
-export function createSavedRecipe(draft: RecipeDraft, day: number, existingRecipes: SavedRecipe[]): SavedRecipe {
+export function createSavedRecipe(draft: RecipeDraft, day: number, existingRecipes: SavedRecipe[], estimatedCost = estimateRecipeCost(draft)): SavedRecipe {
   validateRecipe(draft);
   const version = existingRecipes.filter((recipe) => recipe.name.trim().toLocaleLowerCase() === draft.name.trim().toLocaleLowerCase()).length + 1;
   return {
@@ -262,7 +274,7 @@ export function createSavedRecipe(draft: RecipeDraft, day: number, existingRecip
     id: `recipe-${day}-${existingRecipes.length + 1}-${slugify(draft.name)}`,
     version,
     createdDay: day,
-    estimatedCost: estimateRecipeCost(draft),
+    estimatedCost,
   };
 }
 
@@ -271,8 +283,11 @@ export function createBatch(
   day: number,
   batchNumber: number,
   equipmentPrecision: number,
+  sourcing: { rawMaterials: BatchIngredientUse[]; rawMaterialCost: number; qualityScore: number; flavorImpact: Partial<FlavorProfile> },
 ): BatchState {
-  const quality = calculateQuality(recipe, equipmentPrecision, day + batchNumber);
+  const processCost = estimateProcessCost(recipe);
+  const productionCost = roundMoney(processCost + sourcing.rawMaterialCost);
+  const quality = calculateQuality(recipe, equipmentPrecision, day + batchNumber, sourcing.qualityScore, sourcing.flavorImpact);
   const totalDays = recipe.primaryDays + recipe.conditioningDays;
   return {
     id: `batch-${day}-${batchNumber}`,
@@ -283,7 +298,12 @@ export function createBatch(
     phaseStartedDay: day,
     readyDay: day + totalDays,
     progress: 0,
-    productionCost: recipe.estimatedCost,
+    productionCost,
+    rawMaterialCost: sourcing.rawMaterialCost,
+    processCost,
+    supplyQuality: sourcing.qualityScore,
+    rawMaterials: sourcing.rawMaterials,
+    packagingMaterials: [],
     packagingCost: 0,
     packagedUnits: 0,
     availableUnits: 0,
@@ -316,11 +336,13 @@ export function tasteBatch(batch: BatchState, day: number, hasLabKit: boolean): 
   return { ...batch, status: 'tasted', tasting };
 }
 
-export function packageBatch(batch: BatchState): BatchState {
+export function packageBatch(batch: BatchState, packagingMaterials: BatchIngredientUse[] = []): BatchState {
   if (batch.status !== 'tasted') throw new Error('Сначала продегустируй партию');
   const packagedUnits = Math.max(0, Math.floor((batch.recipe.volumeLiters * 0.94) / 0.5));
-  const packagingCost = estimatePackagingCost(batch);
-  return { ...batch, status: 'packaged', packagedUnits, availableUnits: packagedUnits, packagingCost };
+  const packagingCost = packagingMaterials.length > 0
+    ? roundMoney(packagingMaterials.reduce((sum, item) => sum + item.totalCost, 0))
+    : estimatePackagingCost(batch);
+  return { ...batch, status: 'packaged', packagedUnits, availableUnits: packagedUnits, packagingMaterials, packagingCost };
 }
 
 export function discardBatch(batch: BatchState): BatchState {
@@ -354,7 +376,7 @@ function validateRecipe(draft: RecipeDraft): void {
   }
 }
 
-function calculateQuality(recipe: SavedRecipe, equipmentPrecision: number, seed: number): QualityProfile {
+function calculateQuality(recipe: SavedRecipe, equipmentPrecision: number, seed: number, supplyQuality = 75, flavorImpact: Partial<FlavorProfile> = {}): QualityProfile {
   const style = getStyle(recipe.styleId);
   const temperatureCenter = style.defaultProcessTemperature;
   const temperatureDeviation = Math.abs(recipe.processTemperature - temperatureCenter);
@@ -367,17 +389,19 @@ function calculateQuality(recipe: SavedRecipe, equipmentPrecision: number, seed:
     distance(recipe.aroma, style.target.aroma),
   ]);
   const noise = deterministicNoise(`${recipe.name}-${recipe.styleId}-${seed}`);
+  const supplyBonus = (supplyQuality - 75) * 0.28;
+  const flavorStrength = Object.values(flavorImpact).reduce((sum, value) => sum + Math.abs(value ?? 0), 0);
   const defectRisk = clamp(Math.round(
-    8 + temperatureDeviation * 7 + durationDeviation * 3 + Math.max(0, recipe.originality - 3) * 5 - equipmentPrecision * 4 - recipe.treatment * 2 + Math.max(0, noise),
+    10 + temperatureDeviation * 7 + durationDeviation * 3 + Math.max(0, recipe.originality - 3) * 5 - equipmentPrecision * 4 - recipe.treatment * 2 - supplyBonus * 0.55 + Math.max(0, noise),
   ), 1, 72);
-  const technicalPurity = clamp(Math.round(91 - defectRisk * 0.65 + equipmentPrecision * 2 + recipe.treatment * 1.5 + noise), 18, 98);
+  const technicalPurity = clamp(Math.round(89 - defectRisk * 0.65 + equipmentPrecision * 2 + recipe.treatment * 1.5 + supplyBonus + noise), 18, 99);
   const styleFit = clamp(Math.round(96 - profileDistance * 16 - temperatureDeviation * 4 - durationDeviation * 2), 10, 99);
-  const balance = clamp(Math.round(92 - balanceSpread(recipe) * 9 - defectRisk * 0.18 + noise * 0.4), 12, 98);
+  const balance = clamp(Math.round(92 - balanceSpread(recipe) * 9 - defectRisk * 0.18 + supplyBonus * 0.45 - flavorStrength * 1.4 + noise * 0.4), 12, 98);
   const intensity = clamp(Math.round(35 + average([recipe.bitterness, recipe.body, recipe.aroma, recipe.acidity]) * 11 + noise), 20, 98);
-  const complexity = clamp(Math.round(28 + recipe.originality * 10 + recipe.aroma * 5 + recipe.conditioningDays * 0.45 - defectRisk * 0.15 + noise), 12, 98);
+  const complexity = clamp(Math.round(28 + recipe.originality * 10 + recipe.aroma * 5 + recipe.conditioningDays * 0.45 - defectRisk * 0.15 + flavorStrength * 5 + supplyBonus * 0.25 + noise), 12, 98);
   const cohesion = clamp(Math.round(88 - profileDistance * 11 - Math.max(0, recipe.originality - 3) * 4 - defectRisk * 0.2 + recipe.treatment * 2 + noise * 0.3), 8, 98);
   const clarity = clamp(Math.round(96 - recipe.originality * 5 - profileDistance * 7 + technicalPurity * 0.12), 15, 98);
-  const character = clamp(Math.round(34 + recipe.originality * 9 + recipe.aroma * 6 + recipe.body * 4 - Math.max(0, 65 - cohesion) * 0.35 + noise), 15, 99);
+  const character = clamp(Math.round(34 + recipe.originality * 9 + recipe.aroma * 6 + recipe.body * 4 - Math.max(0, 65 - cohesion) * 0.35 + flavorStrength * 6 + supplyBonus * 0.35 + noise), 15, 99);
 
   return {
     technicalPurity,

@@ -50,7 +50,7 @@ export function serializeGameState(state: GameState): string {
 export function parseGameState(serialized: string): GameState {
   try {
     const parsed = JSON.parse(serialized) as { schemaVersion?: number };
-    if (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2 && parsed.schemaVersion !== 3 && parsed.schemaVersion !== 4) throw new Error('Файл не является сохранением Drink Company');
+    if (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2 && parsed.schemaVersion !== 3 && parsed.schemaVersion !== 4 && parsed.schemaVersion !== 5) throw new Error('Файл не является сохранением Drink Company');
     const migrated = migrateGameState(parsed);
     return migrated;
   } catch (error) {

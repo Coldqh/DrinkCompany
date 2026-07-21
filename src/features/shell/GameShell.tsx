@@ -6,6 +6,7 @@ import { CompanyDashboard } from '../dashboard/CompanyDashboard';
 import { MarketWorld } from '../market/MarketWorld';
 import { ProductionStudio } from '../production/ProductionStudio';
 import { Icon } from '../../ui/Icon';
+import type { VersionGuard } from '../../app/useVersionGuard';
 
 export type Tab = 'company' | 'production' | 'batches' | 'market' | 'archive';
 
@@ -17,7 +18,7 @@ const tabs: { id: Tab; label: string; icon: 'home' | 'factory' | 'batch' | 'mark
   { id: 'archive', label: 'Архив', icon: 'archive' },
 ];
 
-export function GameShell({ game }: { game: GameController }) {
+export function GameShell({ game, version }: { game: GameController; version: VersionGuard }) {
   const [tab, setTab] = useState<Tab>('company');
   const [dayMessage, setDayMessage] = useState<string | null>(null);
   const activeBatches = game.state.production.batches.filter((batch) => !['packaged', 'discarded'].includes(batch.status)).length;
@@ -62,6 +63,8 @@ export function GameShell({ game }: { game: GameController }) {
             onBuyEquipment={game.buyEquipment}
             onSaveRecipe={game.saveRecipeDraft}
             onLaunchBatch={game.launchBatch}
+            onOrderSupply={game.orderSupply}
+            onSignSupplier={game.signSupplier}
           />
         )}
         {tab === 'batches' && (
@@ -74,7 +77,7 @@ export function GameShell({ game }: { game: GameController }) {
           />
         )}
         {tab === 'market' && <MarketWorld state={game.state} onSendProposal={game.sendProposal} onAcceptOffer={game.acceptOffer} onDeclineOffer={game.declineOffer} onFulfillOrder={game.fulfillOrder} />}
-        {tab === 'archive' && <ArchiveView state={game.state} onExport={game.exportSave} onImport={game.importSave} onReset={game.reset} />}
+        {tab === 'archive' && <ArchiveView state={game.state} version={version} onExport={game.exportSave} onImport={game.importSave} onReset={game.reset} />}
       </main>
 
       {dayMessage && <div className="day-toast"><Icon name="check" />{dayMessage}</div>}

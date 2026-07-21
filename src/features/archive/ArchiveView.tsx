@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { GameState } from '../../domain/game';
+import type { VersionGuard } from '../../app/useVersionGuard';
 import { getStyle, type SavedRecipe } from '../../domain/production';
 import { Icon } from '../../ui/Icon';
 import { CompactHeader, EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
@@ -9,11 +10,12 @@ interface ArchiveViewProps {
   onExport: () => void;
   onImport: (file: File) => Promise<void>;
   onReset: () => void;
+  version: VersionGuard;
 }
 
 type ArchiveSection = 'recipes' | 'sales' | 'data';
 
-export function ArchiveView({ state, onExport, onImport, onReset }: ArchiveViewProps) {
+export function ArchiveView({ state, version, onExport, onImport, onReset }: ArchiveViewProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [section, setSection] = useState<ArchiveSection>('recipes');
   const [selectedRecipe, setSelectedRecipe] = useState<SavedRecipe | null>(null);
@@ -66,6 +68,7 @@ export function ArchiveView({ state, onExport, onImport, onReset }: ArchiveViewP
       {section === 'data' && (
         <section className="data-panel glass-card">
           <div className="data-status"><div><Icon name="check" /></div><span><strong>Локальное автосохранение</strong><small>IndexedDB · схема {state.schemaVersion}</small></span></div>
+          <div className="version-status"><span><strong>Версия {version.currentVersion}</strong><small>{version.checking ? 'Проверяем обновление…' : version.remote ? `Сервер: ${version.remote.version} · ${version.remote.buildId.slice(0, 7)}` : 'Сервер пока недоступен'}</small></span><button className="button ghost compact-button" onClick={() => void version.checkNow()} disabled={version.checking}>Проверить</button></div>
           <p>Экспортируй файл перед очисткой браузера или переносом игры на другое устройство.</p>
           <div className="stacked-actions">
             <button className="button primary" onClick={onExport}>Экспортировать сохранение</button>

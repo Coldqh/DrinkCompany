@@ -3,6 +3,7 @@ import { equipmentCatalog, getEquipment } from '../data/productionCatalog';
 import { properties } from '../data/catalog';
 import {
   acceptMarketOffer,
+  createSupplierAgreement,
   advanceDay,
   createInitialState,
   declineMarketOffer,
@@ -10,6 +11,7 @@ import {
   fulfillRepeatOrder,
   dismissTutorial,
   packageProductionBatch,
+  orderSupplies,
   purchaseEquipment,
   saveRecipe,
   startCompany,
@@ -20,6 +22,7 @@ import {
   type NewGameSelection,
 } from '../domain/game';
 import type { RecipeDraft } from '../domain/production';
+import type { IngredientCategory } from '../data/supplyCatalog';
 import type { ProposalInput } from '../domain/market';
 import { loadGameState, parseGameState, saveGameState, serializeGameState } from '../infrastructure/gameStateRepository';
 
@@ -39,7 +42,7 @@ export interface GameController {
   importSave: (file: File) => Promise<void>;
   buyEquipment: (equipmentId: string) => ActionResult;
   saveRecipeDraft: (draft: RecipeDraft) => ActionResult;
-  launchBatch: (draft: RecipeDraft) => ActionResult;
+  launchBatch: (draft: RecipeDraft, selectedLots?: Partial<Record<IngredientCategory, string>>) => ActionResult;
   tasteBatch: (batchId: string) => ActionResult;
   packageBatch: (batchId: string) => ActionResult;
   discardBatch: (batchId: string) => ActionResult;
@@ -48,6 +51,8 @@ export interface GameController {
   acceptOffer: (proposalId: string) => ActionResult;
   declineOffer: (proposalId: string) => ActionResult;
   fulfillOrder: (orderId: string, batchId: string) => ActionResult;
+  orderSupply: (offerId: string, quantity: number) => ActionResult;
+  signSupplier: (supplierId: string) => ActionResult;
 }
 
 export function useGameState(): GameController {
@@ -113,12 +118,12 @@ export function useGameState(): GameController {
     perform((current) => saveRecipe(current, draft), `Рецепт «${draft.name}» сохранён`)
   ), [perform]);
 
-  const launchBatch = useCallback((draft: RecipeDraft) => {
+  const launchBatch = useCallback((draft: RecipeDraft, selectedLots: Partial<Record<IngredientCategory, string>> = {}) => {
     const current = stateRef.current;
     const property = properties.find((item) => item.id === current.world?.propertyId);
     if (!property) return { ok: false, message: 'Объект производства не найден' };
     return perform(
-      (game) => startProductionBatch(game, draft, property, equipmentCatalog),
+      (game) => startProductionBatch(game, draft, property, equipmentCatalog, selectedLots),
       `Партия «${draft.name}» запущена`,
     );
   }, [perform]);
@@ -153,6 +158,14 @@ export function useGameState(): GameController {
 
   const fulfillOrder = useCallback((orderId: string, batchId: string) => (
     perform((current) => fulfillRepeatOrder(current, orderId, batchId), 'Повторная поставка обработана')
+  ), [perform]);
+
+  const orderSupply = useCallback((offerId: string, quantity: number) => (
+    perform((current) => orderSupplies(current, offerId, quantity), 'Закупка оформлена')
+  ), [perform]);
+
+  const signSupplier = useCallback((supplierId: string) => (
+    perform((current) => createSupplierAgreement(current, supplierId), 'Постоянный договор подписан')
   ), [perform]);
 
   const reset = useCallback(() => replaceState(createInitialState()), [replaceState]);
@@ -193,5 +206,7 @@ export function useGameState(): GameController {
     acceptOffer,
     declineOffer,
     fulfillOrder,
+    orderSupply,
+    signSupplier,
   };
 }

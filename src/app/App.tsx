@@ -1,9 +1,12 @@
 import { Onboarding } from '../features/onboarding/Onboarding';
 import { GameShell } from '../features/shell/GameShell';
+import { VersionGate } from '../ui/VersionGate';
 import { useGameState } from './useGameState';
+import { useVersionGuard } from './useVersionGuard';
 
 export function App() {
   const game = useGameState();
+  const version = useVersionGuard();
 
   if (!game.isReady) {
     return (
@@ -15,9 +18,12 @@ export function App() {
     );
   }
 
-  if (game.state.phase === 'onboarding') {
-    return <Onboarding onComplete={game.createCompany} />;
-  }
-
-  return <GameShell game={game} />;
+  return (
+    <>
+      {game.state.phase === 'onboarding'
+        ? <Onboarding onComplete={game.createCompany} />
+        : <GameShell game={game} version={version} />}
+      <VersionGate version={version} />
+    </>
+  );
 }

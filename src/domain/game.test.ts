@@ -5,6 +5,7 @@ import {
   advanceDay,
   fulfillRepeatOrder,
   migrateGameState,
+  orderSupplies,
   packageProductionBatch,
   purchaseEquipment,
   submitMarketProposal,
@@ -41,16 +42,27 @@ function createCompany() {
   }, new Date('2026-01-01T00:00:00.000Z'));
 }
 
+function stockBeerMaterials(initial: ReturnType<typeof createCompany>, bottles = 600) {
+  let state = initial;
+  state = orderSupplies(state, 'rhein-pils', 50);
+  state = orderSupplies(state, 'hallertau-mittelfruh', 3);
+  state = orderSupplies(state, 'ferment-ale', 6);
+  state = orderSupplies(state, 'nord-bottle', bottles);
+  for (let day = 0; day < 4; day += 1) state = advanceDay(state);
+  return state;
+}
+
 describe('startCompany', () => {
   it('создаёт рабочее состояние и списывает стоимость объекта', () => {
     const state = createCompany();
     expect(state.phase).toBe('operating');
-    expect(state.schemaVersion).toBe(4);
+    expect(state.schemaVersion).toBe(5);
     expect(state.finance.cash).toBe(100_000);
     expect(state.finance.dailyFixedCost).toBe(180);
     expect(state.company.name).toBe('North Glass');
     expect(state.world?.companies.length).toBeGreaterThanOrEqual(10);
     expect(state.world?.outlets).toHaveLength(12);
+    expect(state.supply.offers.length).toBeGreaterThan(10);
   });
 
   it('отклоняет слишком короткое название', () => {
@@ -66,6 +78,8 @@ describe('production cycle', () => {
       if (!equipment) throw new Error('test equipment missing');
       state = purchaseEquipment(state, equipment);
     }
+
+    state = stockBeerMaterials(state);
 
     const draft = { ...createRecipeDraft('beer'), name: 'Citrus Line', primaryDays: 5, conditioningDays: 3, volumeLiters: 100 };
     state = startProductionBatch(state, draft, property, equipmentCatalog);
@@ -117,9 +131,10 @@ describe('save migration', () => {
     };
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(5);
     expect(migrated.production.batches).toEqual([]);
     expect(migrated.company.completedBatches).toBe(0);
+    expect(migrated.supply.inventory).toEqual([]);
     expect(migrated.world?.companies.length).toBeGreaterThan(0);
   });
 
@@ -134,9 +149,10 @@ describe('save migration', () => {
     delete world.nextRepeatOrderNumber;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(5);
     expect(migrated.world?.repeatOrders).toEqual([]);
     expect(migrated.world?.demandSignals.length).toBeGreaterThan(0);
+    expect(migrated.supply.offers.length).toBeGreaterThan(0);
   });
 
   it('добавляет рынок в сохранение schemaVersion 2', () => {
@@ -153,7 +169,7 @@ describe('save migration', () => {
     delete finance.unitsSold;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(5);
     expect(migrated.world?.outlets).toHaveLength(12);
     expect(migrated.finance.salesRevenue).toBe(0);
   });
@@ -168,6 +184,8 @@ describe('market cycle', () => {
       if (!equipment) throw new Error('test equipment missing');
       state = purchaseEquipment(state, equipment);
     }
+
+    state = stockBeerMaterials(state);
 
     const draft = { ...createRecipeDraft('beer'), name: 'Market Line', primaryDays: 2, conditioningDays: 1, volumeLiters: 100 };
     state = startProductionBatch(state, draft, property, equipmentCatalog);
@@ -210,6 +228,7 @@ describe('market cycle', () => {
       if (!equipment) throw new Error('test equipment missing');
       state = purchaseEquipment(state, equipment);
     }
+    state = stockBeerMaterials(state);
     const draft = { ...createRecipeDraft('beer'), primaryDays: 1, conditioningDays: 1, volumeLiters: 80 };
     state = startProductionBatch(state, draft, property, equipmentCatalog);
     state = advanceDay(advanceDay(state));
@@ -233,6 +252,8 @@ describe('living market', () => {
       if (!equipment) throw new Error('test equipment missing');
       state = purchaseEquipment(state, equipment);
     }
+
+    state = stockBeerMaterials(state);
 
     const draft = { ...createRecipeDraft('beer'), name: 'House Pale', primaryDays: 2, conditioningDays: 1, volumeLiters: 100 };
     state = startProductionBatch(state, draft, property, equipmentCatalog);

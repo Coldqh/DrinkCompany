@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { ActionResult } from '../../app/useGameState';
 import type { GameState } from '../../domain/game';
 import { averageQuality, statusLabel, type BatchState } from '../../domain/production';
+import { getPackagingRequirement, inventoryQuantity, formatQuantity } from '../../domain/supply';
 import { Icon } from '../../ui/Icon';
 import { CompactHeader, EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
 
@@ -76,6 +77,7 @@ export function BatchBoard({ state, onTaste, onPackage, onDiscard, onOpenProduct
           batch={selectedBatch}
           currentDay={state.day}
           hasBottler={hasBottler}
+          bottleStock={inventoryQuantity(state.supply.inventory, 'bottles')}
           onClose={() => setSelectedBatch(null)}
           onTaste={() => handle(onTaste(selectedBatch.id))}
           onPackage={() => handle(onPackage(selectedBatch.id))}
@@ -86,10 +88,12 @@ export function BatchBoard({ state, onTaste, onPackage, onDiscard, onOpenProduct
   );
 }
 
-function BatchModal({ batch, currentDay, hasBottler, onClose, onTaste, onPackage, onDiscard }: { batch: BatchState; currentDay: number; hasBottler: boolean; onClose: () => void; onTaste: () => void; onPackage: () => void; onDiscard: () => void }) {
+function BatchModal({ batch, currentDay, hasBottler, bottleStock, onClose, onTaste, onPackage, onDiscard }: { batch: BatchState; currentDay: number; hasBottler: boolean; bottleStock: number; onClose: () => void; onTaste: () => void; onPackage: () => void; onDiscard: () => void }) {
   const quality = averageQuality(batch.quality);
   const daysLeft = Math.max(0, batch.readyDay - currentDay);
   const isTerminal = ['packaged', 'discarded'].includes(batch.status);
+  const bottlesNeeded = getPackagingRequirement(batch.recipe.volumeLiters).quantity;
+  const canPackage = hasBottler && bottleStock >= bottlesNeeded;
 
   return (
     <Modal
@@ -98,7 +102,7 @@ function BatchModal({ batch, currentDay, hasBottler, onClose, onTaste, onPackage
       onClose={onClose}
       footer={!isTerminal ? <div className="modal-actions">
         {batch.status === 'ready' && <button className="button primary" onClick={onTaste}><Icon name="lab" />Дегустация</button>}
-        {batch.status === 'tasted' && <button className="button primary" onClick={onPackage} disabled={!hasBottler}><Icon name="bottle" />{hasBottler ? 'Разлить' : 'Нужен розлив'}</button>}
+        {batch.status === 'tasted' && <button className="button primary" onClick={onPackage} disabled={!canPackage}><Icon name="bottle" />{!hasBottler ? 'Нужен розлив' : bottleStock < bottlesNeeded ? 'Нет бутылок' : 'Разлить'}</button>}
         <button className="button danger" onClick={onDiscard}>Списать</button>
       </div> : undefined}
     >
@@ -113,6 +117,13 @@ function BatchModal({ batch, currentDay, hasBottler, onClose, onTaste, onPackage
         <div><span>Основной этап</span><strong>{batch.recipe.primaryDays} дн.</strong></div>
         <div><span>Созревание</span><strong>{batch.recipe.conditioningDays} дн.</strong></div>
       </div>
+
+
+      <section className="batch-materials">
+        <div className="batch-materials-head"><span>Сырьё партии</span><strong>{batch.supplyQuality}/100</strong></div>
+        {batch.rawMaterials.map((material) => <div key={`${material.lotId}-${material.ingredientId}`}><span><strong>{material.variantName}</strong><small>{material.origin}</small></span><span><b>{formatQuantity(material.quantity, material.unit)}</b><small>{material.totalCost.toFixed(2)}</small></span></div>)}
+        {batch.rawMaterials.length === 0 && <p>Старая партия без детализации сырья.</p>}
+      </section>
 
       {batch.tasting ? (
         <section className="compact-report">
