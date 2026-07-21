@@ -7,6 +7,7 @@ import {
   createInitialState,
   declineMarketOffer,
   discardProductionBatch,
+  fulfillRepeatOrder,
   dismissTutorial,
   packageProductionBatch,
   purchaseEquipment,
@@ -46,6 +47,7 @@ export interface GameController {
   sendProposal: (input: ProposalInput) => ActionResult;
   acceptOffer: (proposalId: string) => ActionResult;
   declineOffer: (proposalId: string) => ActionResult;
+  fulfillOrder: (orderId: string, batchId: string) => ActionResult;
 }
 
 export function useGameState(): GameController {
@@ -149,6 +151,10 @@ export function useGameState(): GameController {
     perform((current) => declineMarketOffer(current, proposalId), 'Оффер отклонён')
   ), [perform]);
 
+  const fulfillOrder = useCallback((orderId: string, batchId: string) => (
+    perform((current) => fulfillRepeatOrder(current, orderId, batchId), 'Повторная поставка обработана')
+  ), [perform]);
+
   const reset = useCallback(() => replaceState(createInitialState()), [replaceState]);
 
   const exportSave = useCallback(() => {
@@ -186,5 +192,6 @@ export function useGameState(): GameController {
     sendProposal,
     acceptOffer,
     declineOffer,
+    fulfillOrder,
   };
 }

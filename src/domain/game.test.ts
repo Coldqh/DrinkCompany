@@ -3,6 +3,7 @@ import { equipmentCatalog } from '../data/productionCatalog';
 import {
   acceptMarketOffer,
   advanceDay,
+  fulfillRepeatOrder,
   migrateGameState,
   packageProductionBatch,
   purchaseEquipment,
@@ -44,7 +45,7 @@ describe('startCompany', () => {
   it('создаёт рабочее состояние и списывает стоимость объекта', () => {
     const state = createCompany();
     expect(state.phase).toBe('operating');
-    expect(state.schemaVersion).toBe(3);
+    expect(state.schemaVersion).toBe(4);
     expect(state.finance.cash).toBe(100_000);
     expect(state.finance.dailyFixedCost).toBe(180);
     expect(state.company.name).toBe('North Glass');
@@ -116,10 +117,26 @@ describe('save migration', () => {
     };
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.schemaVersion).toBe(4);
     expect(migrated.production.batches).toEqual([]);
     expect(migrated.company.completedBatches).toBe(0);
     expect(migrated.world?.companies.length).toBeGreaterThan(0);
+  });
+
+  it('добавляет живой рынок в сохранение schemaVersion 3', () => {
+    const legacy = JSON.parse(JSON.stringify(createCompany())) as Record<string, unknown>;
+    legacy.schemaVersion = 3;
+    const world = legacy.world as Record<string, unknown>;
+    delete world.repeatOrders;
+    delete world.reviews;
+    delete world.demandSignals;
+    delete world.releases;
+    delete world.nextRepeatOrderNumber;
+
+    const migrated = migrateGameState(legacy);
+    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.world?.repeatOrders).toEqual([]);
+    expect(migrated.world?.demandSignals.length).toBeGreaterThan(0);
   });
 
   it('добавляет рынок в сохранение schemaVersion 2', () => {
@@ -136,7 +153,7 @@ describe('save migration', () => {
     delete finance.unitsSold;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.schemaVersion).toBe(4);
     expect(migrated.world?.outlets).toHaveLength(12);
     expect(migrated.finance.salesRevenue).toBe(0);
   });
@@ -204,5 +221,82 @@ describe('market cycle', () => {
     state = advanceDay(advanceDay(advanceDay(state)));
     expect(state.world?.proposals[0]?.status).toBe('rejected');
     expect(state.world?.proposals[0]?.decisionReasons.join(' ')).toContain('Категория');
+  });
+});
+
+
+describe('living market', () => {
+  it('создаёт отзыв и повторный заказ, затем принимает стабильную новую партию', () => {
+    let state = createCompany();
+    for (const equipmentId of ['micro-brewhouse', 'fermentation-bank', 'compact-bottler', 'lab-kit']) {
+      const equipment = equipmentCatalog.find((item) => item.id === equipmentId);
+      if (!equipment) throw new Error('test equipment missing');
+      state = purchaseEquipment(state, equipment);
+    }
+
+    const draft = { ...createRecipeDraft('beer'), name: 'House Pale', primaryDays: 2, conditioningDays: 1, volumeLiters: 100 };
+    state = startProductionBatch(state, draft, property, equipmentCatalog);
+    state = advanceDay(advanceDay(advanceDay(state)));
+    const first = state.production.batches[0];
+    if (!first) throw new Error('first batch missing');
+    state = tasteProductionBatch(state, first.id);
+    state = packageProductionBatch(state, first.id);
+    state = submitMarketProposal(state, { outletId: 'taproom-17', batchId: first.id, contactMode: 'meeting', askingPrice: 2.7, requestedUnits: 48 });
+    state = advanceDay(state);
+    const offer = state.world?.proposals[0];
+    if (!offer || offer.status !== 'offer') throw new Error('offer missing');
+    state = acceptMarketOffer(state, offer.id);
+
+    state = startProductionBatch(state, { ...draft, name: 'House Pale v2' }, property, equipmentCatalog);
+    state = advanceDay(advanceDay(state));
+    expect(state.world?.reviews).toHaveLength(1);
+    state = advanceDay(state);
+    const secondReady = state.production.batches.find((batch) => batch.recipe.name === 'House Pale v2');
+    if (!secondReady) throw new Error('second batch missing');
+    state = tasteProductionBatch(state, secondReady.id);
+    state = packageProductionBatch(state, secondReady.id);
+    state = advanceDay(state);
+
+    const order = state.world?.repeatOrders.find((item) => item.status === 'pending');
+    expect(order).toBeTruthy();
+    if (!order) throw new Error('repeat order missing');
+    const cashBefore = state.finance.cash;
+    state = fulfillRepeatOrder(state, order.id, secondReady.id);
+
+    expect(state.world?.repeatOrders.find((item) => item.id === order.id)?.status).toBe('fulfilled');
+    expect(state.world?.repeatOrders.find((item) => item.id === order.id)?.consistencyScore).toBeGreaterThanOrEqual(order.minConsistency);
+    expect(state.finance.cash).toBeGreaterThan(cashBefore);
+    expect(state.world?.sales[0]?.kind).toBe('repeat');
+  });
+
+  it('просрочивает повторный заказ и ухудшает отношения', () => {
+    let state = createCompany();
+    if (!state.world) throw new Error('world missing');
+    const outlet = state.world.outlets.find((item) => item.id === 'taproom-17');
+    if (!outlet) throw new Error('outlet missing');
+    state = {
+      ...state,
+      day: 10,
+      world: {
+        ...state.world,
+        repeatOrders: [{
+          id: 'repeat-expire', outletId: outlet.id, referenceContractId: 'contract-x', referenceBatchId: 'batch-x', createdDay: 5,
+          dueDay: 10, family: 'beer', styleId: 'modern-pale-ale', units: 24, unitPrice: 2.5, minConsistency: 70,
+          status: 'pending', fulfilledBatchId: null, consistencyScore: null, decisionNote: 'test',
+        }],
+      },
+    };
+    const relationshipBefore = outlet.relationship;
+    state = advanceDay(state);
+    expect(state.world?.repeatOrders[0]?.status).toBe('expired');
+    expect(state.world?.outlets.find((item) => item.id === outlet.id)?.relationship).toBe(Math.max(0, relationshipBefore - 12));
+  });
+
+  it('двигает спрос и выпускает релизы компаний мира', () => {
+    let state = createCompany();
+    const initialDemand = state.world?.demandSignals.map((signal) => signal.index) ?? [];
+    for (let index = 0; index < 5; index += 1) state = advanceDay(state);
+    expect(state.world?.releases.length).toBeGreaterThan(0);
+    expect(state.world?.demandSignals.map((signal) => signal.index)).not.toEqual(initialDemand);
   });
 });

@@ -923,3 +923,47 @@ svg { width: 1.25rem; height: 1.25rem; }
   .focus-actions { grid-template-columns: 1fr; }
   .compact-day-button small { display: none; }
 }
+
+/* Patch 007 — living market */
+.demand-strip { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+.demand-card { min-width:0; padding:12px 13px; border:1px solid var(--line); border-radius:17px; background:linear-gradient(145deg,rgba(255,255,255,.04),rgba(255,255,255,.018)); }
+.demand-card span,.demand-card small { display:block; color:var(--muted); font-size:.58rem; }
+.demand-card strong { display:block; margin:.2rem 0; font-size:1.08rem; letter-spacing:-.04em; }
+.demand-card.rising { border-color:rgba(114,214,155,.22); background:linear-gradient(145deg,rgba(114,214,155,.09),rgba(255,255,255,.018)); }
+.demand-card.rising strong { color:#9ce4b8; }
+.demand-card.falling { border-color:rgba(237,127,122,.2); background:linear-gradient(145deg,rgba(237,127,122,.075),rgba(255,255,255,.018)); }
+.demand-card.falling strong { color:#f0a09b; }
+.demand-banner { margin-bottom:12px; }
+.demand-banner.rising { border-color:rgba(114,214,155,.2); background:rgba(114,214,155,.07); }
+.demand-banner.falling { border-color:rgba(237,127,122,.2); background:rgba(237,127,122,.07); }
+.deadline { min-width:44px; padding:.34rem .48rem; border-radius:9px; background:rgba(125,174,234,.09); color:#a9c8ee; font-size:.62rem; font-weight:900; text-align:center; }
+.deadline.urgent { background:rgba(237,127,122,.1); color:#f5a19d; }
+.row-icon.order-active { color:#9dc5ef; background:rgba(125,174,234,.09); }
+.row-icon.order-fulfilled { color:#9be2b6; background:rgba(114,214,155,.08); }
+.row-icon.order-failed,.row-icon.order-expired { color:#f2a29e; background:rgba(237,127,122,.08); }
+.order-status { display:inline-flex; width:max-content; padding:.31rem .48rem; border-radius:9px; font-size:.58rem; font-weight:900; }
+.order-status.pending { color:#a9c8ee; background:rgba(125,174,234,.1); }
+.order-status.fulfilled { color:#9be2b6; background:rgba(114,214,155,.1); }
+.order-status.failed,.order-status.expired { color:#f4a6a1; background:rgba(237,127,122,.1); }
+.review-score { width:34px; height:34px; flex:none; border-radius:11px; display:grid; place-items:center; font-size:.8rem; font-weight:950; border:1px solid var(--line); background:rgba(255,255,255,.04); }
+.review-score.score-5,.review-score.score-4 { color:#9be2b6; border-color:rgba(114,214,155,.2); background:rgba(114,214,155,.08); }
+.review-score.score-2,.review-score.score-1 { color:#f4a6a1; border-color:rgba(237,127,122,.2); background:rgba(237,127,122,.08); }
+.order-state-card { display:grid; gap:.28rem; padding:14px; border-radius:17px; border:1px solid var(--line); background:rgba(255,255,255,.025); }
+.order-state-card > span,.order-state-card > small { color:var(--muted); font-size:.62rem; }
+.order-state-card.pending { border-color:rgba(125,174,234,.18); background:rgba(125,174,234,.055); }
+.order-state-card.fulfilled { border-color:rgba(114,214,155,.18); background:rgba(114,214,155,.055); }
+.order-state-card.failed,.order-state-card.expired { border-color:rgba(237,127,122,.18); background:rgba(237,127,122,.055); }
+.order-candidates { display:grid; gap:8px; }
+.order-candidates > span { color:var(--muted); font-size:.68rem; font-weight:850; }
+.order-candidates > button { width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; text-align:left; padding:12px; border-radius:15px; border:1px solid var(--line); background:rgba(255,255,255,.025); cursor:pointer; }
+.order-candidates > button strong,.order-candidates > button small { display:block; }
+.order-candidates > button strong { font-size:.76rem; }
+.order-candidates > button small { margin-top:.2rem; color:var(--muted); font-size:.58rem; }
+.order-candidates > button i { width:16px; height:16px; flex:none; border:1px solid var(--line-strong); border-radius:50%; }
+.order-candidates > button.active { border-color:rgba(255,155,82,.45); background:rgba(255,155,82,.07); }
+.order-candidates > button.active i { border:4px solid var(--accent); }
+.release-list .compact-list-row small,.review-list-compact .compact-list-row small { white-space:normal; line-height:1.35; }
+@media (max-width:390px) {
+  .demand-card { padding:10px 11px; }
+  .demand-card strong { font-size:.96rem; }
+}

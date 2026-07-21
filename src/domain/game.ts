@@ -15,15 +15,22 @@ import {
 } from './production';
 import { marketOutlets } from '../data/marketCatalog';
 import {
+  batchConsistency,
+  createConsumerReview,
   createProposal,
+  createRepeatOrder,
   evaluateProposal,
   proposalActionCost,
   repeatPotential,
   type MarketOutletState,
   type MarketProposal,
+  type ConsumerReview,
+  type DemandSignal,
   type MarketSale,
   type ProposalInput,
+  type RepeatOrder,
   type SupplyContract,
+  type WorldRelease,
 } from './market';
 
 export type GameMode = 'standard' | 'roguelike';
@@ -98,8 +105,13 @@ export interface WorldState {
   proposals: MarketProposal[];
   contracts: SupplyContract[];
   sales: MarketSale[];
+  repeatOrders: RepeatOrder[];
+  reviews: ConsumerReview[];
+  demandSignals: DemandSignal[];
+  releases: WorldRelease[];
   nextProposalNumber: number;
   nextContractNumber: number;
+  nextRepeatOrderNumber: number;
 }
 
 export interface FinanceState {
@@ -125,7 +137,7 @@ export interface TutorialState {
 }
 
 export interface GameState {
-  schemaVersion: 3;
+  schemaVersion: 4;
   phase: GamePhase;
   mode: GameMode;
   day: number;
@@ -150,6 +162,11 @@ export interface LegacyGameStateV1 {
   discoveredProductFamilies: ProductFamily[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LegacyGameStateV3 extends Omit<GameState, 'schemaVersion' | 'world'> {
+  schemaVersion: 3;
+  world: (Omit<WorldState, 'repeatOrders' | 'reviews' | 'demandSignals' | 'releases' | 'nextRepeatOrderNumber'> & Partial<Pick<WorldState, 'repeatOrders' | 'reviews' | 'demandSignals' | 'releases' | 'nextRepeatOrderNumber'>>) | null;
 }
 
 export interface LegacyGameStateV2 {
@@ -189,7 +206,7 @@ export const STARTING_CASH: Record<GameMode, number> = {
 export function createInitialState(now = new Date()): GameState {
   const timestamp = now.toISOString();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     phase: 'onboarding',
     mode: 'standard',
     day: 1,
@@ -215,7 +232,7 @@ export function startCompany(selection: NewGameSelection, now = new Date()): Gam
 
   const timestamp = now.toISOString();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     phase: 'operating',
     mode: selection.mode,
     day: 1,
@@ -427,6 +444,7 @@ export function acceptMarketOffer(state: GameState, proposalId: string, now = ne
     units: proposal.offeredUnits,
     unitPrice: proposal.offeredPrice,
     revenue,
+    kind: 'first',
   };
   const updatedBatch = { ...batch, availableUnits: batch.availableUnits - proposal.offeredUnits };
   const reputationGain = proposal.fitScore >= 78 ? 3 : proposal.fitScore >= 66 ? 2 : 1;
@@ -459,6 +477,113 @@ export function acceptMarketOffer(state: GameState, proposalId: string, now = ne
       }, ...state.world.pulse].slice(0, 10),
     },
     tutorial: completeTutorialStep(completeTutorialStep(state.tutorial, 'market-offer'), 'first-sale'),
+  }, now);
+}
+
+export function fulfillRepeatOrder(state: GameState, orderId: string, batchId: string, now = new Date()): GameState {
+  ensureOperating(state);
+  if (!state.world) throw new Error('Рынок недоступен');
+  const order = getRepeatOrder(state.world, orderId);
+  if (order.status !== 'pending') throw new Error('Этот повторный заказ уже закрыт');
+  if (state.day > order.dueDay) throw new Error('Срок заказа уже истёк');
+  const outlet = getOutlet(state.world, order.outletId);
+  const candidate = getBatch(state, batchId);
+  const reference = getBatch(state, order.referenceBatchId);
+  if (candidate.status !== 'packaged') throw new Error('Для поставки нужна разлитая партия');
+  if (candidate.recipe.family !== order.family || candidate.recipe.styleId !== order.styleId) {
+    throw new Error('Покупатель ждёт тот же стиль напитка, что и в первой поставке');
+  }
+  if (candidate.availableUnits < order.units) throw new Error(`Для заказа нужно ${order.units} бутылок`);
+
+  const consistency = batchConsistency(reference, candidate);
+  const qualityAccepted = candidate.quality.technicalPurity >= outlet.minTechnicalPurity
+    && candidate.quality.defectRisk <= outlet.maxDefectRisk;
+  if (consistency < order.minConsistency || !qualityAccepted) {
+    const reason = !qualityAccepted
+      ? 'Контроль качества не пропустил новую партию: чистота или риск дефектов вышли за требования.'
+      : `Стабильность ${consistency}/100 ниже требуемых ${order.minConsistency}/100.`;
+    return touch({
+      ...state,
+      company: { ...state.company, reputation: clamp(state.company.reputation - 2, 0, 100) },
+      world: {
+        ...state.world,
+        repeatOrders: state.world.repeatOrders.map((item) => item.id === order.id ? {
+          ...item,
+          status: 'failed' as const,
+          fulfilledBatchId: candidate.id,
+          consistencyScore: consistency,
+          decisionNote: reason,
+        } : item),
+        outlets: state.world.outlets.map((item) => item.id === outlet.id ? { ...item, relationship: clamp(item.relationship - 10, 0, 100) } : item),
+        pulse: [{
+          id: `pulse-${state.day}-repeat-fail-${order.id}`,
+          day: state.day,
+          tone: 'warning' as const,
+          title: `${outlet.name} отклонила повторную поставку`,
+          detail: reason,
+        }, ...state.world.pulse].slice(0, 12),
+      },
+    }, now);
+  }
+
+  const revenue = roundMoney(order.unitPrice * order.units);
+  const bookValue = roundMoney(unitBookValue(candidate) * order.units);
+  const contract: SupplyContract = {
+    id: `contract-${state.day}-${state.world.nextContractNumber}`,
+    outletId: outlet.id,
+    batchId: candidate.id,
+    signedDay: state.day,
+    unitPrice: order.unitPrice,
+    units: order.units,
+    grossRevenue: revenue,
+    repeatPotential: clamp(Math.round(order.minConsistency * 0.45 + consistency * 0.35 + outlet.relationship * 0.2), 0, 100),
+    status: 'fulfilled',
+  };
+  const sale: MarketSale = {
+    id: `sale-${state.day}-${state.world.sales.length + 1}`,
+    contractId: contract.id,
+    outletId: outlet.id,
+    batchId: candidate.id,
+    day: state.day,
+    units: order.units,
+    unitPrice: order.unitPrice,
+    revenue,
+    kind: 'repeat',
+  };
+  const updatedBatch = { ...candidate, availableUnits: candidate.availableUnits - order.units };
+
+  return touch({
+    ...state,
+    company: { ...state.company, reputation: clamp(state.company.reputation + (consistency >= 86 ? 3 : 2), 0, 100) },
+    finance: {
+      ...state.finance,
+      cash: roundMoney(state.finance.cash + revenue),
+      packagedInventoryValue: roundMoney(Math.max(0, state.finance.packagedInventoryValue - bookValue)),
+      salesRevenue: roundMoney(state.finance.salesRevenue + revenue),
+      unitsSold: state.finance.unitsSold + order.units,
+    },
+    production: replaceBatch(state.production, updatedBatch),
+    world: {
+      ...state.world,
+      repeatOrders: state.world.repeatOrders.map((item) => item.id === order.id ? {
+        ...item,
+        status: 'fulfilled' as const,
+        fulfilledBatchId: candidate.id,
+        consistencyScore: consistency,
+        decisionNote: `Поставка принята. Стабильность ${consistency}/100.`,
+      } : item),
+      outlets: state.world.outlets.map((item) => item.id === outlet.id ? { ...item, relationship: clamp(item.relationship + 7, 0, 100) } : item),
+      contracts: [contract, ...state.world.contracts],
+      sales: [sale, ...state.world.sales],
+      nextContractNumber: state.world.nextContractNumber + 1,
+      pulse: [{
+        id: `pulse-${state.day}-repeat-sale-${sale.id}`,
+        day: state.day,
+        tone: 'release' as const,
+        title: `${outlet.name} приняла повторную поставку`,
+        detail: `${order.units} бутылок · стабильность ${consistency}/100 · выручка ${revenue.toFixed(2)}.`,
+      }, ...state.world.pulse].slice(0, 12),
+    },
   }, now);
 }
 
@@ -499,15 +624,19 @@ export function migrateGameState(value: unknown): GameState {
   if (!value || typeof value !== 'object') return createInitialState();
   const candidate = value as { schemaVersion?: number; phase?: unknown; company?: unknown; finance?: unknown; production?: unknown };
 
-  if (candidate.schemaVersion === 3 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
+  if (candidate.schemaVersion === 4 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
     return normalizeCurrentState(value as GameState);
+  }
+
+  if (candidate.schemaVersion === 3 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
+    return normalizeCurrentState({ ...(value as LegacyGameStateV3), schemaVersion: 4 } as GameState);
   }
 
   if (candidate.schemaVersion === 2 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
     const legacy = value as LegacyGameStateV2;
     return normalizeCurrentState({
       ...legacy,
-      schemaVersion: 3,
+      schemaVersion: 4,
       world: legacy.world ? {
         ...createWorldState(legacy.world.countryId, legacy.world.regionId, legacy.world.propertyId),
         companies: legacy.world.companies?.length ? normalizeWorldCompanies(legacy.world.companies) : createWorldCompanies(),
@@ -524,7 +653,7 @@ export function migrateGameState(value: unknown): GameState {
   if (candidate.schemaVersion === 1 && candidate.phase && candidate.company && candidate.finance) {
     const legacy = value as LegacyGameStateV1;
     return {
-      schemaVersion: 3,
+      schemaVersion: 4,
       phase: legacy.phase,
       mode: legacy.mode,
       day: legacy.day,
@@ -564,12 +693,17 @@ function normalizeCurrentState(state: GameState): GameState {
     proposals: state.world.proposals ?? [],
     contracts: state.world.contracts ?? [],
     sales: state.world.sales ?? [],
+    repeatOrders: state.world.repeatOrders ?? [],
+    reviews: state.world.reviews ?? [],
+    demandSignals: state.world.demandSignals?.length ? state.world.demandSignals : createDemandSignals(),
+    releases: state.world.releases ?? [],
     nextProposalNumber: state.world.nextProposalNumber ?? 1,
     nextContractNumber: state.world.nextContractNumber ?? 1,
+    nextRepeatOrderNumber: state.world.nextRepeatOrderNumber ?? 1,
   } : null;
   return {
     ...state,
-    schemaVersion: 3,
+    schemaVersion: 4,
     finance: {
       ...state.finance,
       salesRevenue: state.finance.salesRevenue ?? 0,
@@ -625,35 +759,83 @@ function touch(state: GameState, now: Date): GameState {
 
 function advanceWorld(world: WorldState, batches: BatchState[], companyReputation: number, day: number): WorldState {
   let companies = world.companies;
+  let outlets = world.outlets;
   let pulse = world.pulse;
+  let releases = world.releases;
+  let demandSignals = world.demandSignals;
 
-  if (day % 4 === 0 && companies.length > 0) {
-    const companyIndex = Math.floor(day / 4) % companies.length;
-    companies = companies.map((company, index): WorldCompanyState => {
-      if (index !== companyIndex) return company;
-      const momentumShift = ((day + index * 3) % 7) - 3;
-      const momentum = clamp(company.momentum + momentumShift, 15, 95);
-      const status: WorldCompanyState['status'] = momentum >= 67 ? 'growing' : momentum <= 36 ? 'struggling' : 'stable';
-      return { ...company, momentum, status };
+  if (day % 3 === 0) {
+    demandSignals = demandSignals.map((signal, index) => {
+      const marketPressure = companies.reduce((sum, company) => sum + (companyFamily(company) === signal.family ? company.momentum - 50 : 0), 0) / Math.max(1, companies.length);
+      const cycle = ((day + index * 5) % 9) - 4;
+      const shift = Math.round(cycle * 0.7 + marketPressure * 0.035);
+      const indexValue = clamp(signal.index + shift, 18, 88);
+      const trend = shift >= 2 ? 'rising' : shift <= -2 ? 'falling' : 'stable';
+      return {
+        ...signal,
+        index: indexValue,
+        trend,
+        confidence: clamp(signal.confidence + (((day + index) % 5) - 2), 42, 86),
+        note: demandNote(signal.family, trend, indexValue),
+        updatedDay: day,
+      };
     });
-    const changed = companies[companyIndex] ?? companies[0];
-    if (changed) {
+    const local = demandSignals.find((signal) => signal.regionId === world.regionId && signal.family === (day % 2 === 0 ? 'beer' : 'cider'));
+    if (local) {
       pulse = [{
-        id: `pulse-${day}-${changed.id}`,
+        id: `pulse-${day}-demand-${local.id}`,
         day,
-        tone: (changed.status === 'struggling' ? 'warning' : 'release') as WorldPulseItem['tone'],
-        title: changed.status === 'growing' ? `${changed.name} набирает спрос` : `${changed.name} меняет рыночную позицию`,
-        detail: `${changed.activeRelease}: импульс рынка ${changed.momentum}/100.`,
-      }, ...pulse].slice(0, 10);
+        tone: local.trend === 'falling' ? 'warning' as const : 'market' as const,
+        title: `${local.family === 'beer' ? 'Пиво' : 'Сидр'}: спрос ${local.trend === 'rising' ? 'растёт' : local.trend === 'falling' ? 'снижается' : 'держится'}`,
+        detail: `${local.note} Точность сигнала ${local.confidence}%.`,
+      }, ...pulse].slice(0, 12);
+    }
+  }
+
+  if (day % 5 === 0 && companies.length > 0) {
+    const companyIndex = Math.floor(day / 5) % companies.length;
+    const current = companies[companyIndex];
+    if (current) {
+      const family = companyFamily(current);
+      const compatible = outlets.filter((outlet) => outlet.targetFamilies.includes(family));
+      const placement = compatible[(day + companyIndex) % Math.max(1, compatible.length)] ?? outlets[(day + companyIndex) % outlets.length];
+      const releaseName = nextReleaseName(current, day);
+      const impact = ((day + companyIndex * 7) % 15) - 5;
+      const momentum = clamp(current.momentum + impact, 15, 95);
+      const status: WorldCompanyState['status'] = momentum >= 67 ? 'growing' : momentum <= 36 ? 'struggling' : 'stable';
+      companies = companies.map((company, index) => index === companyIndex ? { ...company, activeRelease: releaseName, momentum, status } : company);
+      if (placement) {
+        outlets = outlets.map((outlet) => outlet.id === placement.id ? {
+          ...outlet,
+          supplierCompanyIds: [current.id, ...outlet.supplierCompanyIds.filter((id) => id !== current.id)].slice(0, 5),
+        } : outlet);
+      }
+      const release: WorldRelease = {
+        id: `release-${day}-${current.id}`,
+        companyId: current.id,
+        day,
+        name: releaseName,
+        category: current.category,
+        outletId: placement?.id ?? null,
+        impact,
+      };
+      releases = [release, ...releases].slice(0, 24);
+      pulse = [{
+        id: `pulse-${day}-release-${current.id}`,
+        day,
+        tone: impact < 0 ? 'warning' as const : 'release' as const,
+        title: `${current.name} выпустила ${releaseName}`,
+        detail: placement ? `Релиз появился в ${placement.name}; импульс компании ${momentum}/100.` : `Импульс компании ${momentum}/100.`,
+      }, ...pulse].slice(0, 12);
     }
   }
 
   const proposals = world.proposals.map((proposal) => {
     if (proposal.status !== 'reviewing' || proposal.reviewDay > day) return proposal;
-    const outlet = world.outlets.find((item) => item.id === proposal.outletId);
+    const outlet = outlets.find((item) => item.id === proposal.outletId);
     const batch = batches.find((item) => item.id === proposal.batchId);
     if (!outlet || !batch) return { ...proposal, status: 'rejected' as const, fitScore: 0, decisionReasons: [...proposal.decisionReasons, 'Закупщик не смог подтвердить происхождение образца.'] };
-    return evaluateProposal(proposal, outlet, batch, companyReputation);
+    return evaluateProposal(proposal, outlet, batch, companyReputation, getDemandIndex({ demandSignals }, outlet, batch.recipe.family));
   });
 
   const newlyResolved = proposals.filter((proposal) => {
@@ -661,20 +843,79 @@ function advanceWorld(world: WorldState, batches: BatchState[], companyReputatio
     return previous?.status === 'reviewing' && proposal.status !== 'reviewing';
   });
   for (const proposal of newlyResolved) {
-    const outlet = world.outlets.find((item) => item.id === proposal.outletId);
+    const outlet = outlets.find((item) => item.id === proposal.outletId);
     if (!outlet) continue;
     pulse = [{
       id: `pulse-${day}-decision-${proposal.id}`,
       day,
-      tone: (proposal.status === 'offer' ? 'release' : 'warning') as WorldPulseItem['tone'],
+      tone: proposal.status === 'offer' ? 'release' as const : 'warning' as const,
       title: proposal.status === 'offer' ? `${outlet.name} прислала оффер` : `${outlet.name} отказала в поставке`,
       detail: proposal.status === 'offer'
         ? `${proposal.offeredUnits} бутылок по ${proposal.offeredPrice?.toFixed(2)} за единицу.`
         : proposal.decisionReasons.at(-1) ?? 'Продукт не прошёл внутренний отбор.',
-    }, ...pulse].slice(0, 10);
+    }, ...pulse].slice(0, 12);
   }
 
-  return { ...world, companies, proposals, pulse };
+  let reviews = world.reviews;
+  const reviewable = world.contracts.filter((contract) => day >= contract.signedDay + 2 && !reviews.some((review) => review.contractId === contract.id));
+  for (const contract of reviewable) {
+    const outlet = outlets.find((item) => item.id === contract.outletId);
+    const batch = batches.find((item) => item.id === contract.batchId);
+    if (!outlet || !batch) continue;
+    const review = createConsumerReview(contract, outlet, batch, day);
+    reviews = [review, ...reviews];
+    outlets = outlets.map((item) => item.id === outlet.id ? { ...item, relationship: clamp(item.relationship + review.relationshipEffect, 0, 100) } : item);
+    pulse = [{
+      id: `pulse-${day}-${review.id}`,
+      day,
+      tone: review.score >= 4 ? 'release' as const : review.score <= 2 ? 'warning' as const : 'market' as const,
+      title: `${outlet.name}: ${review.headline}`,
+      detail: `${review.score}/5 · ${review.note}`,
+    }, ...pulse].slice(0, 12);
+  }
+
+  let repeatOrders = world.repeatOrders;
+  let nextRepeatOrderNumber = world.nextRepeatOrderNumber;
+  const eligibleContracts = world.contracts.filter((contract) => (
+    contract.repeatPotential >= 55
+    && day >= contract.signedDay + 4
+    && !repeatOrders.some((order) => order.referenceContractId === contract.id)
+  ));
+  for (const contract of eligibleContracts) {
+    const batch = batches.find((item) => item.id === contract.batchId);
+    const outlet = outlets.find((item) => item.id === contract.outletId);
+    if (!batch || !outlet) continue;
+    const order = createRepeatOrder(contract, batch, day, nextRepeatOrderNumber);
+    nextRepeatOrderNumber += 1;
+    repeatOrders = [order, ...repeatOrders];
+    pulse = [{
+      id: `pulse-${day}-${order.id}`,
+      day,
+      tone: 'market' as const,
+      title: `${outlet.name} прислала повторный заказ`,
+      detail: `${order.units} бутылок до ${order.dueDay}-го дня. Нужна стабильность не ниже ${order.minConsistency}/100.`,
+    }, ...pulse].slice(0, 12);
+  }
+
+  const expiredIds = repeatOrders.filter((order) => order.status === 'pending' && day > order.dueDay).map((order) => order.id);
+  if (expiredIds.length > 0) {
+    repeatOrders = repeatOrders.map((order) => expiredIds.includes(order.id) ? { ...order, status: 'expired' as const, decisionNote: 'Срок поставки истёк, точка закрыла заказ.' } : order);
+    for (const orderId of expiredIds) {
+      const order = repeatOrders.find((item) => item.id === orderId);
+      if (!order) continue;
+      const outlet = outlets.find((item) => item.id === order.outletId);
+      outlets = outlets.map((item) => item.id === order.outletId ? { ...item, relationship: clamp(item.relationship - 12, 0, 100) } : item);
+      pulse = [{
+        id: `pulse-${day}-expired-${orderId}`,
+        day,
+        tone: 'warning' as const,
+        title: `${outlet?.name ?? 'Покупатель'} закрыла просроченный заказ`,
+        detail: `Поставка не пришла до ${order.dueDay}-го дня. Отношения ухудшились.`,
+      }, ...pulse].slice(0, 12);
+    }
+  }
+
+  return { ...world, companies, outlets, proposals, pulse, releases, demandSignals, reviews, repeatOrders, nextRepeatOrderNumber };
 }
 
 function createWorldState(countryId: string, regionId: string, propertyId: string): WorldState {
@@ -688,8 +929,13 @@ function createWorldState(countryId: string, regionId: string, propertyId: strin
     proposals: [],
     contracts: [],
     sales: [],
+    repeatOrders: [],
+    reviews: [],
+    demandSignals: createDemandSignals(),
+    releases: [],
     nextProposalNumber: 1,
     nextContractNumber: 1,
+    nextRepeatOrderNumber: 1,
   };
 }
 
@@ -735,6 +981,64 @@ function getProposal(world: WorldState, proposalId: string): MarketProposal {
   const proposal = world.proposals.find((item) => item.id === proposalId);
   if (!proposal) throw new Error('Предложение не найдено');
   return proposal;
+}
+
+function getRepeatOrder(world: WorldState, orderId: string): RepeatOrder {
+  const order = world.repeatOrders.find((item) => item.id === orderId);
+  if (!order) throw new Error('Повторный заказ не найден');
+  return order;
+}
+
+function createDemandSignals(): DemandSignal[] {
+  const regionKeys = new Map<string, { countryId: string; regionId: string }>();
+  for (const outlet of marketOutlets) regionKeys.set(`${outlet.countryId}:${outlet.regionId}`, { countryId: outlet.countryId, regionId: outlet.regionId });
+  const signals: DemandSignal[] = [];
+  let index = 0;
+  for (const region of regionKeys.values()) {
+    for (const family of ['beer', 'cider'] as ProductFamily[]) {
+      const interested = marketOutlets.filter((outlet) => outlet.regionId === region.regionId && outlet.targetFamilies.includes(family)).length;
+      const base = clamp(42 + interested * 8 + ((index * 7) % 13), 28, 78);
+      signals.push({
+        id: `demand-${region.regionId}-${family}`,
+        countryId: region.countryId,
+        regionId: region.regionId,
+        family,
+        index: base,
+        trend: 'stable',
+        confidence: 58 + (index % 4) * 6,
+        note: demandNote(family, 'stable', base),
+        updatedDay: 1,
+      });
+      index += 1;
+    }
+  }
+  return signals;
+}
+
+function getDemandIndex(world: Pick<WorldState, 'demandSignals'>, outlet: MarketOutletState, family: ProductFamily): number {
+  return world.demandSignals.find((signal) => signal.regionId === outlet.regionId && signal.family === family)?.index
+    ?? world.demandSignals.find((signal) => signal.countryId === outlet.countryId && signal.family === family)?.index
+    ?? 50;
+}
+
+function companyFamily(company: WorldCompanyState): ProductFamily {
+  const text = `${company.category} ${company.focus}`.toLowerCase();
+  return text.includes('сидр') || text.includes('ябл') || text.includes('пуар') ? 'cider' : 'beer';
+}
+
+function demandNote(family: ProductFamily, trend: DemandSignal['trend'], index: number): string {
+  const category = family === 'beer' ? 'пива' : 'сидра';
+  if (trend === 'rising') return `Точки активнее ищут новые позиции ${category}, но лучшие полки быстро занимают.`;
+  if (trend === 'falling') return `Продажи ${category} замедлились; закупщики режут тестовые объёмы и цену.`;
+  if (index >= 68) return `Спрос на ${category} высокий, хотя данные по отдельным районам расходятся.`;
+  if (index <= 36) return `Категория ${category} сейчас слабая, прогноз основан на неполных продажах.`;
+  return `Спрос на ${category} ровный; заметной волны пока нет.`;
+}
+
+function nextReleaseName(company: WorldCompanyState, day: number): string {
+  const stem = company.activeRelease.split(/[\s#]/)[0] || company.name.split(' ')[0] || 'Release';
+  const suffix = String((day * 7 + company.name.length) % 97).padStart(2, '0');
+  return `${stem} ${suffix}`;
 }
 
 function unitBookValue(batch: BatchState): number {
