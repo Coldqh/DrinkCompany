@@ -1,6 +1,6 @@
 import type { ReactNode, SVGProps } from 'react';
 
-type IconName = 'home' | 'factory' | 'batch' | 'market' | 'archive' | 'wallet' | 'clock' | 'spark' | 'kettle' | 'press' | 'tank' | 'bottle' | 'lab' | 'beer' | 'apple' | 'arrow' | 'check' | 'warning' | 'close';
+type IconName = 'home' | 'factory' | 'batch' | 'market' | 'archive' | 'wallet' | 'clock' | 'spark' | 'kettle' | 'press' | 'tank' | 'bottle' | 'lab' | 'beer' | 'apple' | 'arrow' | 'check' | 'warning' | 'close' | 'store' | 'handshake' | 'sample' | 'contract' | 'map';
 
 const paths: Record<IconName, ReactNode> = {
   home: <><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V21h13V9.5"/><path d="M9 21v-6h6v6"/></>,
@@ -22,6 +22,11 @@ const paths: Record<IconName, ReactNode> = {
   check: <path d="m5 12 4 4L19 6"/>,
   warning: <><path d="m12 3 10 18H2Z"/><path d="M12 9v5M12 18h.01"/></>,
   close: <path d="M6 6l12 12M18 6 6 18"/>,
+  store: <><path d="M3 9h18l-2-5H5Z"/><path d="M5 9v11h14V9M9 20v-6h6v6"/><path d="M3 9c0 2 3 3 4.5 1.5C9 12 12 12 13.5 10.5 15 12 18 12 19.5 10.5 21 12 21 9 21 9"/></>,
+  handshake: <><path d="m8 12 3 3c1 1 2.5-.5 1.5-1.5l-2-2"/><path d="m10.5 11.5 3 3c1 1 2.5-.5 1.5-1.5l-3-3"/><path d="m12 10 3.5 3.5c1 1 2.5-.5 1.5-1.5l-4.5-4.5"/><path d="M2 8l4-3 4 3-4 6-4-2ZM22 8l-4-3-5 3 5 6 4-2Z"/></>,
+  sample: <><path d="M9 3h6M10 3v5l-4 8a3 3 0 0 0 2.7 4h6.6a3 3 0 0 0 2.7-4l-4-8V3"/><path d="M8 15h8M10 12h4"/></>,
+  contract: <><path d="M6 3h9l3 3v15H6Z"/><path d="M15 3v4h4M9 11h6M9 15h6M9 19h4"/></>,
+  map: <><path d="M12 21s6-5 6-11a6 6 0 1 0-12 0c0 6 6 11 6 11Z"/><circle cx="12" cy="10" r="2"/></>,
 };
 
 export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) {

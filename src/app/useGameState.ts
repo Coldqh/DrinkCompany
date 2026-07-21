@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { equipmentCatalog, getEquipment } from '../data/productionCatalog';
 import { properties } from '../data/catalog';
 import {
+  acceptMarketOffer,
   advanceDay,
   createInitialState,
+  declineMarketOffer,
   discardProductionBatch,
   dismissTutorial,
   packageProductionBatch,
@@ -11,11 +13,13 @@ import {
   saveRecipe,
   startCompany,
   startProductionBatch,
+  submitMarketProposal,
   tasteProductionBatch,
   type GameState,
   type NewGameSelection,
 } from '../domain/game';
 import type { RecipeDraft } from '../domain/production';
+import type { ProposalInput } from '../domain/market';
 import { loadGameState, parseGameState, saveGameState, serializeGameState } from '../infrastructure/gameStateRepository';
 
 export interface ActionResult {
@@ -39,6 +43,9 @@ export interface GameController {
   packageBatch: (batchId: string) => ActionResult;
   discardBatch: (batchId: string) => ActionResult;
   hideTutorial: () => void;
+  sendProposal: (input: ProposalInput) => ActionResult;
+  acceptOffer: (proposalId: string) => ActionResult;
+  declineOffer: (proposalId: string) => ActionResult;
 }
 
 export function useGameState(): GameController {
@@ -130,6 +137,18 @@ export function useGameState(): GameController {
     replaceState(dismissTutorial(stateRef.current));
   }, [replaceState]);
 
+  const sendProposal = useCallback((input: ProposalInput) => (
+    perform((current) => submitMarketProposal(current, input), 'Предложение отправлено закупщику')
+  ), [perform]);
+
+  const acceptOffer = useCallback((proposalId: string) => (
+    perform((current) => acceptMarketOffer(current, proposalId), 'Поставка подтверждена, деньги зачислены')
+  ), [perform]);
+
+  const declineOffer = useCallback((proposalId: string) => (
+    perform((current) => declineMarketOffer(current, proposalId), 'Оффер отклонён')
+  ), [perform]);
+
   const reset = useCallback(() => replaceState(createInitialState()), [replaceState]);
 
   const exportSave = useCallback(() => {
@@ -164,5 +183,8 @@ export function useGameState(): GameController {
     packageBatch: packageBatchAction,
     discardBatch: discardBatchAction,
     hideTutorial,
+    sendProposal,
+    acceptOffer,
+    declineOffer,
   };
 }

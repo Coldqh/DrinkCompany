@@ -67,7 +67,7 @@ function BatchCard({ batch, currentDay, hasBottler, onTaste, onPackage, onDiscar
     <article className={`batch-card glass-card status-${batch.status}`}>
       <div className="batch-main">
         <div className="batch-progress" style={{ '--batch-progress': `${batch.progress * 3.6}deg` } as React.CSSProperties}>
-          <div><strong>{batch.status === 'packaged' ? batch.packagedUnits : batch.progress}</strong><span>{batch.status === 'packaged' ? 'бут.' : '%'}</span></div>
+          <div><strong>{batch.status === 'packaged' ? batch.availableUnits : batch.progress}</strong><span>{batch.status === 'packaged' ? 'бут.' : '%'}</span></div>
         </div>
         <div className="batch-copy">
           <div className="batch-labels"><span className="status-chip">{statusLabel(batch.status)}</span><b>{batch.code}</b></div>
@@ -108,7 +108,7 @@ function BatchCard({ batch, currentDay, hasBottler, onTaste, onPackage, onDiscar
           <button className="button danger subtle" onClick={onDiscard}>Списать</button>
         </div>
       )}
-      {batch.status === 'packaged' && <div className="packaged-banner"><Icon name="check" /><span><strong>{batch.packagedUnits} бутылок на складе</strong><small>Партия готова к переговорам и поставкам.</small></span></div>}
+      {batch.status === 'packaged' && <div className="packaged-banner"><Icon name="check" /><span><strong>{batch.availableUnits} из {batch.packagedUnits} бутылок на складе</strong><small>Остаток уменьшается после образцов и подтверждённых поставок.</small></span></div>}
       {batch.status === 'discarded' && <div className="discarded-banner">Партия списана. Производственные затраты не возвращаются.</div>}
     </article>
   );

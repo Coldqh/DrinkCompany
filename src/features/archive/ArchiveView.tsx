@@ -44,6 +44,21 @@ export function ArchiveView({ state, onExport, onImport, onReset }: ArchiveViewP
         )}
       </section>
 
+      <section>
+        <div className="section-title-row"><div><span className="section-kicker">коммерческий архив</span><h3>Закрытые поставки</h3></div><span className="status-chip neutral">{state.world?.contracts.length ?? 0} контрактов</span></div>
+        {(state.world?.sales.length ?? 0) === 0 ? (
+          <div className="empty-row glass-card"><Icon name="contract" /><span><strong>Продаж пока нет</strong><small>Принятые офферы и поставки появятся здесь.</small></span></div>
+        ) : (
+          <div className="commercial-archive-grid">
+            {state.world?.sales.map((sale) => {
+              const outlet = state.world?.outlets.find((item) => item.id === sale.outletId);
+              const batch = state.production.batches.find((item) => item.id === sale.batchId);
+              return <article key={sale.id} className="commercial-archive-card glass-card"><div><Icon name="handshake" /><span>День {sale.day}</span></div><h4>{outlet?.name}</h4><p>{batch?.code} · {sale.units} бутылок по {sale.unitPrice.toFixed(2)}</p><strong>{new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(sale.revenue)}</strong></article>;
+            })}
+          </div>
+        )}
+      </section>
+
       <section className="save-center glass-card">
         <div className="card-heading"><div><span className="section-kicker">локальное сохранение</span><h3>Управление данными</h3></div><span className="status-chip positive">IndexedDB</span></div>
         <p>Игра сохраняется автоматически в браузере. Экспорт нужен для резервной копии или переноса на другое устройство.</p>

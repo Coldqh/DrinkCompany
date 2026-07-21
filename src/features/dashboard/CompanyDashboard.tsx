@@ -17,6 +17,8 @@ const tutorialSteps = [
   { id: 'batch', title: 'Запустить партию', text: 'Закупить сырьё и начать производство.' },
   { id: 'tasting', title: 'Провести дегустацию', text: 'Получить реальные сильные и слабые стороны.' },
   { id: 'packaging', title: 'Разлить продукт', text: 'Подготовить бутылки к переговорам с рынком.' },
+  { id: 'market-contact', title: 'Найти покупателя', text: 'Отправить образец или лично встретиться с закупщиком.' },
+  { id: 'first-sale', title: 'Закрыть первую поставку', text: 'Принять оффер и получить первую выручку.' },
 ];
 
 export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onDismissTutorial }: CompanyDashboardProps) {
@@ -24,6 +26,7 @@ export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onDis
   const region = regions.find((item) => item.id === state.world?.regionId);
   const activeBatch = state.production.batches.find((batch) => !['packaged', 'discarded'].includes(batch.status));
   const readyCount = state.production.batches.filter((batch) => ['ready', 'tasted'].includes(batch.status)).length;
+  const stockUnits = state.production.batches.filter((batch) => batch.status === 'packaged').reduce((sum, batch) => sum + batch.availableUnits, 0);
   const installedValue = equipmentCatalog
     .filter((item) => state.production.equipmentIds.includes(item.id))
     .reduce((sum, item) => sum + item.cost, 0);
@@ -68,8 +71,8 @@ export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onDis
       <section className="metric-strip">
         <Metric icon="wallet" label="Свободные деньги" value={formatMoney(state.finance.cash)} meta={`−${formatMoney(state.finance.dailyFixedCost)} / день`} />
         <Metric icon="factory" label="Оборудование" value={formatMoney(installedValue)} meta={`${state.production.equipmentIds.length} модулей`} />
-        <Metric icon="batch" label="Готово к решению" value={String(readyCount)} meta={`${state.production.batches.length} партий всего`} />
-        <Metric icon="spark" label="Репутация" value={`${state.company.reputation}/100`} meta={`${state.company.completedBatches} релизов`} />
+        <Metric icon="batch" label="Склад" value={`${stockUnits} бут.`} meta={`${readyCount} партий ждут решения`} />
+        <Metric icon="market" label="Выручка" value={formatMoney(state.finance.salesRevenue)} meta={`${state.finance.unitsSold} бутылок продано`} />
       </section>
 
       {!state.tutorial.dismissed && (
@@ -145,7 +148,7 @@ export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onDis
   );
 }
 
-function Metric({ icon, label, value, meta }: { icon: 'wallet' | 'factory' | 'batch' | 'spark'; label: string; value: string; meta: string }) {
+function Metric({ icon, label, value, meta }: { icon: 'wallet' | 'factory' | 'batch' | 'spark' | 'market'; label: string; value: string; meta: string }) {
   return (
     <article className="metric-card glass-card">
       <div className="metric-icon"><Icon name={icon} /></div>

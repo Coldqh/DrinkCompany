@@ -93,6 +93,7 @@ export interface BatchState {
   productionCost: number;
   packagingCost: number;
   packagedUnits: number;
+  availableUnits: number;
   quality: QualityProfile;
   tasting: TastingResult | null;
 }
@@ -285,6 +286,7 @@ export function createBatch(
     productionCost: recipe.estimatedCost,
     packagingCost: 0,
     packagedUnits: 0,
+    availableUnits: 0,
     quality,
     tasting: null,
   };
@@ -318,12 +320,12 @@ export function packageBatch(batch: BatchState): BatchState {
   if (batch.status !== 'tasted') throw new Error('Сначала продегустируй партию');
   const packagedUnits = Math.max(0, Math.floor((batch.recipe.volumeLiters * 0.94) / 0.5));
   const packagingCost = estimatePackagingCost(batch);
-  return { ...batch, status: 'packaged', packagedUnits, packagingCost };
+  return { ...batch, status: 'packaged', packagedUnits, availableUnits: packagedUnits, packagingCost };
 }
 
 export function discardBatch(batch: BatchState): BatchState {
   if (batch.status === 'packaged') throw new Error('Уже разлитую партию нельзя списать целиком');
-  return { ...batch, status: 'discarded', packagedUnits: 0 };
+  return { ...batch, status: 'discarded', packagedUnits: 0, availableUnits: 0 };
 }
 
 export function statusLabel(status: BatchStatus): string {

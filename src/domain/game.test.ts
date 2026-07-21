@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { equipmentCatalog } from '../data/productionCatalog';
 import {
+  acceptMarketOffer,
   advanceDay,
   migrateGameState,
   packageProductionBatch,
   purchaseEquipment,
+  submitMarketProposal,
   startCompany,
   startProductionBatch,
   tasteProductionBatch,
@@ -42,11 +44,12 @@ describe('startCompany', () => {
   it('создаёт рабочее состояние и списывает стоимость объекта', () => {
     const state = createCompany();
     expect(state.phase).toBe('operating');
-    expect(state.schemaVersion).toBe(2);
+    expect(state.schemaVersion).toBe(3);
     expect(state.finance.cash).toBe(100_000);
     expect(state.finance.dailyFixedCost).toBe(180);
     expect(state.company.name).toBe('North Glass');
-    expect(state.world?.companies.length).toBeGreaterThanOrEqual(5);
+    expect(state.world?.companies.length).toBeGreaterThanOrEqual(10);
+    expect(state.world?.outlets).toHaveLength(12);
   });
 
   it('отклоняет слишком короткое название', () => {
@@ -79,6 +82,7 @@ describe('production cycle', () => {
     state = packageProductionBatch(state, readyBatch.id);
     expect(state.production.batches[0]?.status).toBe('packaged');
     expect(state.production.batches[0]?.packagedUnits).toBeGreaterThan(150);
+    expect(state.production.batches[0]?.availableUnits).toBe(state.production.batches[0]?.packagedUnits);
     expect(state.company.completedBatches).toBe(1);
     expect(state.finance.packagedInventoryValue).toBeGreaterThan(0);
   });
@@ -112,9 +116,93 @@ describe('save migration', () => {
     };
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.schemaVersion).toBe(3);
     expect(migrated.production.batches).toEqual([]);
     expect(migrated.company.completedBatches).toBe(0);
     expect(migrated.world?.companies.length).toBeGreaterThan(0);
+  });
+
+  it('добавляет рынок в сохранение schemaVersion 2', () => {
+    const current = createCompany();
+    const legacy = JSON.parse(JSON.stringify(current)) as Record<string, unknown>;
+    legacy.schemaVersion = 2;
+    const world = legacy.world as Record<string, unknown>;
+    delete world.outlets;
+    delete world.proposals;
+    delete world.contracts;
+    delete world.sales;
+    const finance = legacy.finance as Record<string, unknown>;
+    delete finance.salesRevenue;
+    delete finance.unitsSold;
+
+    const migrated = migrateGameState(legacy);
+    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.world?.outlets).toHaveLength(12);
+    expect(migrated.finance.salesRevenue).toBe(0);
+  });
+});
+
+
+describe('market cycle', () => {
+  it('отправляет образцы, получает оффер и проводит поставку', () => {
+    let state = createCompany();
+    for (const equipmentId of ['micro-brewhouse', 'fermentation-bank', 'compact-bottler', 'lab-kit']) {
+      const equipment = equipmentCatalog.find((item) => item.id === equipmentId);
+      if (!equipment) throw new Error('test equipment missing');
+      state = purchaseEquipment(state, equipment);
+    }
+
+    const draft = { ...createRecipeDraft('beer'), name: 'Market Line', primaryDays: 2, conditioningDays: 1, volumeLiters: 100 };
+    state = startProductionBatch(state, draft, property, equipmentCatalog);
+    state = advanceDay(advanceDay(advanceDay(state)));
+    const ready = state.production.batches[0];
+    if (!ready) throw new Error('batch missing');
+    state = tasteProductionBatch(state, ready.id);
+    state = packageProductionBatch(state, ready.id);
+    const packaged = state.production.batches[0];
+    if (!packaged) throw new Error('packaged batch missing');
+
+    state = submitMarketProposal(state, {
+      outletId: 'taproom-17',
+      batchId: packaged.id,
+      contactMode: 'meeting',
+      askingPrice: 2.7,
+      requestedUnits: 48,
+    });
+    expect(state.world?.proposals[0]?.status).toBe('reviewing');
+    expect(state.production.batches[0]?.availableUnits).toBe(packaged.availableUnits - 1);
+
+    state = advanceDay(state);
+    const offer = state.world?.proposals[0];
+    expect(offer?.status).toBe('offer');
+    if (!offer) throw new Error('offer missing');
+    const cashBeforeSale = state.finance.cash;
+    state = acceptMarketOffer(state, offer.id);
+
+    expect(state.world?.contracts).toHaveLength(1);
+    expect(state.finance.salesRevenue).toBeGreaterThan(0);
+    expect(state.finance.cash).toBeGreaterThan(cashBeforeSale);
+    expect(state.finance.unitsSold).toBeGreaterThan(0);
+    expect(state.tutorial.completedSteps).toContain('first-sale');
+  });
+
+  it('отказывает точке с несовместимой категорией', () => {
+    let state = createCompany();
+    for (const equipmentId of ['micro-brewhouse', 'fermentation-bank', 'compact-bottler']) {
+      const equipment = equipmentCatalog.find((item) => item.id === equipmentId);
+      if (!equipment) throw new Error('test equipment missing');
+      state = purchaseEquipment(state, equipment);
+    }
+    const draft = { ...createRecipeDraft('beer'), primaryDays: 1, conditioningDays: 1, volumeLiters: 80 };
+    state = startProductionBatch(state, draft, property, equipmentCatalog);
+    state = advanceDay(advanceDay(state));
+    const batch = state.production.batches[0];
+    if (!batch) throw new Error('batch missing');
+    state = tasteProductionBatch(state, batch.id);
+    state = packageProductionBatch(state, batch.id);
+    state = submitMarketProposal(state, { outletId: 'orchard-room', batchId: batch.id, contactMode: 'sample', askingPrice: 2.5, requestedUnits: 24 });
+    state = advanceDay(advanceDay(advanceDay(state)));
+    expect(state.world?.proposals[0]?.status).toBe('rejected');
+    expect(state.world?.proposals[0]?.decisionReasons.join(' ')).toContain('Категория');
   });
 });

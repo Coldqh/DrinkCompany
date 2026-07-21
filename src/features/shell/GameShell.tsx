@@ -21,6 +21,7 @@ export function GameShell({ game }: { game: GameController }) {
   const [tab, setTab] = useState<Tab>('company');
   const [dayMessage, setDayMessage] = useState<string | null>(null);
   const activeBatches = game.state.production.batches.filter((batch) => !['packaged', 'discarded'].includes(batch.status)).length;
+  const activeOffers = game.state.world?.proposals.filter((proposal) => proposal.status === 'offer').length ?? 0;
 
   function finishDay() {
     const result = game.nextDay();
@@ -73,7 +74,7 @@ export function GameShell({ game }: { game: GameController }) {
             onOpenProduction={() => setTab('production')}
           />
         )}
-        {tab === 'market' && <MarketWorld state={game.state} />}
+        {tab === 'market' && <MarketWorld state={game.state} onSendProposal={game.sendProposal} onAcceptOffer={game.acceptOffer} onDeclineOffer={game.declineOffer} />}
         {tab === 'archive' && <ArchiveView state={game.state} onExport={game.exportSave} onImport={game.importSave} onReset={game.reset} />}
       </main>
 
@@ -90,7 +91,7 @@ export function GameShell({ game }: { game: GameController }) {
       <nav className="bottom-nav" aria-label="Основная навигация">
         {tabs.map((item) => (
           <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
-            <span className="nav-icon"><Icon name={item.icon} />{item.id === 'batches' && activeBatches > 0 && <i>{activeBatches}</i>}</span>
+            <span className="nav-icon"><Icon name={item.icon} />{item.id === 'batches' && activeBatches > 0 && <i>{activeBatches}</i>}{item.id === 'market' && activeOffers > 0 && <i>{activeOffers}</i>}</span>
             <small>{item.label}</small>
           </button>
         ))}
