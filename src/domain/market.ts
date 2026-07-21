@@ -193,6 +193,7 @@ export function evaluateProposal(
   batch: BatchState,
   companyReputation: number,
   demandIndex = 50,
+  commercialBoost = 0,
 ): EvaluatedProposal {
   const quality = batch.quality;
   const familyMatch = outlet.targetFamilies.includes(batch.recipe.family);
@@ -203,7 +204,7 @@ export function evaluateProposal(
   const familyModifier = familyMatch ? 6 : -16;
   const priceModifier = priceFitModifier(proposal.askingPrice, outlet.preferredWholesale);
   const demandModifier = clamp((demandIndex - 50) * 0.16, -8, 8);
-  const score = clamp(Math.round(qualityScore + relationshipBonus + reputationBonus + meetingBonus + familyModifier + priceModifier + demandModifier), 0, 100);
+  const score = clamp(Math.round(qualityScore + relationshipBonus + reputationBonus + meetingBonus + familyModifier + priceModifier + demandModifier + commercialBoost), 0, 100);
 
   const hardFailures: string[] = [];
   if (!familyMatch) hardFailures.push('Категория напитка не входит в текущую закупочную матрицу точки.');
@@ -211,6 +212,8 @@ export function evaluateProposal(
   if (quality.defectRisk > outlet.maxDefectRisk) hardFailures.push(`Риск дефектов выше допустимого уровня ${outlet.maxDefectRisk}.`);
 
   const reasons = [...proposal.decisionReasons, ...buildDecisionReasons(quality, outlet, proposal.askingPrice, demandIndex)];
+  if (commercialBoost >= 5) reasons.push('Бренд и упаковка усилили коммерческое восприятие продукта.');
+  if (commercialBoost < 0) reasons.push('Продукту не хватает оформленного бренда и понятного позиционирования.');
   if (hardFailures.length > 0 || score < outlet.acceptanceThreshold - 8) {
     return {
       ...proposal,

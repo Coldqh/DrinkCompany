@@ -18,6 +18,9 @@ import {
   purchaseEquipment,
   queueProductionRecipe,
   removeQueuedRecipe,
+  registerBrand,
+  registerProductRelease,
+  startPromotionCampaign,
   serviceProductionEquipment,
   saveRecipe,
   startCompany,
@@ -32,6 +35,7 @@ import type { RecipeDraft } from '../domain/production';
 import type { FacilityRoomId, FacilityUtilityId } from '../domain/facility';
 import type { IngredientCategory } from '../data/supplyCatalog';
 import type { ProposalInput } from '../domain/market';
+import type { BrandDraft, CampaignType, ReleaseDraft } from '../domain/brand';
 import { loadGameState, parseGameState, saveGameState, serializeGameState } from '../infrastructure/gameStateRepository';
 
 export interface ActionResult {
@@ -68,6 +72,9 @@ export interface GameController {
   upgradeEquipment: (equipmentId: string) => ActionResult;
   queueRecipe: (recipeId: string) => ActionResult;
   removeQueue: (queueId: string) => ActionResult;
+  createBrand: (draft: BrandDraft) => ActionResult;
+  createRelease: (draft: ReleaseDraft) => ActionResult;
+  launchCampaign: (releaseId: string, type: CampaignType) => ActionResult;
 }
 
 export function useGameState(): GameController {
@@ -214,6 +221,18 @@ export function useGameState(): GameController {
     perform((current) => removeQueuedRecipe(current, queueId), 'Позиция удалена из очереди')
   ), [perform]);
 
+  const createBrandAction = useCallback((draft: BrandDraft) => (
+    perform((current) => registerBrand(current, draft), `Бренд «${draft.name}» создан`)
+  ), [perform]);
+
+  const createReleaseAction = useCallback((draft: ReleaseDraft) => (
+    perform((current) => registerProductRelease(current, draft), `Релиз «${draft.name}» запущен`)
+  ), [perform]);
+
+  const launchCampaignAction = useCallback((releaseId: string, type: CampaignType) => (
+    perform((current) => startPromotionCampaign(current, releaseId, type), 'Продвижение запущено')
+  ), [perform]);
+
   const reset = useCallback(() => replaceState(createInitialState()), [replaceState]);
 
   const exportSave = useCallback(() => {
@@ -261,5 +280,8 @@ export function useGameState(): GameController {
     upgradeEquipment,
     queueRecipe,
     removeQueue,
+    createBrand: createBrandAction,
+    createRelease: createReleaseAction,
+    launchCampaign: launchCampaignAction,
   };
 }

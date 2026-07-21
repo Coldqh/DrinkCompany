@@ -27,6 +27,18 @@ import {
 } from './supply';
 import type { IngredientCategory } from '../data/supplyCatalog';
 import {
+  advanceBrandDay,
+  commercialScoreForBatch,
+  createBrand,
+  createBrandState,
+  createRelease,
+  launchCampaign,
+  type BrandDraft,
+  type BrandState,
+  type CampaignType,
+  type ReleaseDraft,
+} from './brand';
+import {
   advanceFacilityDay,
   cleanFacility,
   cleaningCost,
@@ -163,6 +175,7 @@ export interface FinanceState {
   supplySpend: number;
   facilitySpend: number;
   maintenanceSpend: number;
+  brandSpend: number;
   packagedInventoryValue: number;
   salesRevenue: number;
   unitsSold: number;
@@ -190,7 +203,7 @@ export interface TutorialState {
 }
 
 export interface GameState {
-  schemaVersion: 6;
+  schemaVersion: 7;
   phase: GamePhase;
   mode: GameMode;
   day: number;
@@ -200,6 +213,7 @@ export interface GameState {
   production: ProductionState;
   supply: SupplyState;
   facility: FacilityState | null;
+  brand: BrandState;
   tutorial: TutorialState;
   discoveredProductFamilies: ProductFamily[];
   createdAt: string;
@@ -220,17 +234,22 @@ export interface LegacyGameStateV1 {
 }
 
 
-export interface LegacyGameStateV5 extends Omit<GameState, 'schemaVersion' | 'facility'> {
+export interface LegacyGameStateV6 extends Omit<GameState, 'schemaVersion' | 'brand'> {
+  schemaVersion: 6;
+  brand?: BrandState;
+}
+
+export interface LegacyGameStateV5 extends Omit<GameState, 'schemaVersion' | 'facility' | 'brand'> {
   schemaVersion: 5;
   facility?: FacilityState | null;
 }
 
-export interface LegacyGameStateV4 extends Omit<GameState, 'schemaVersion' | 'supply'> {
+export interface LegacyGameStateV4 extends Omit<GameState, 'schemaVersion' | 'supply' | 'brand'> {
   schemaVersion: 4;
   supply?: SupplyState;
 }
 
-export interface LegacyGameStateV3 extends Omit<GameState, 'schemaVersion' | 'world'> {
+export interface LegacyGameStateV3 extends Omit<GameState, 'schemaVersion' | 'world' | 'brand'> {
   schemaVersion: 3;
   world: (Omit<WorldState, 'repeatOrders' | 'reviews' | 'demandSignals' | 'releases' | 'nextRepeatOrderNumber'> & Partial<Pick<WorldState, 'repeatOrders' | 'reviews' | 'demandSignals' | 'releases' | 'nextRepeatOrderNumber'>>) | null;
 }
@@ -274,7 +293,7 @@ export const STARTING_CASH: Record<GameMode, number> = {
 export function createInitialState(now = new Date()): GameState {
   const timestamp = now.toISOString();
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     phase: 'onboarding',
     mode: 'standard',
     day: 1,
@@ -284,6 +303,7 @@ export function createInitialState(now = new Date()): GameState {
     production: createProductionState(),
     supply: createSupplyState(1),
     facility: null,
+    brand: createBrandState(),
     tutorial: { dismissed: false, completedSteps: [] },
     discoveredProductFamilies: ['beer', 'cider'],
     createdAt: timestamp,
@@ -303,7 +323,7 @@ export function startCompany(selection: NewGameSelection, now = new Date()): Gam
   const timestamp = now.toISOString();
   const facility = createFacilityState({ ...selection.property, propertyDailyCost: selection.property.dailyCost }, 1);
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     phase: 'operating',
     mode: selection.mode,
     day: 1,
@@ -313,6 +333,7 @@ export function startCompany(selection: NewGameSelection, now = new Date()): Gam
     production: createProductionState(),
     supply: createSupplyState(1),
     facility,
+    brand: createBrandState(),
     tutorial: { dismissed: false, completedSteps: [] },
     discoveredProductFamilies: ['beer', 'cider'],
     createdAt: timestamp,
@@ -777,6 +798,42 @@ export function removeQueuedRecipe(state: GameState, queueId: string, now = new 
   return touch({ ...state, production: { ...state.production, queue: state.production.queue.filter((item) => item.id !== queueId) } }, now);
 }
 
+export function registerBrand(state: GameState, draft: BrandDraft, now = new Date()): GameState {
+  ensureOperating(state);
+  const result = createBrand(state.brand, draft, state.day);
+  if (state.finance.cash < result.cost) throw new Error('Недостаточно денег на запуск бренда');
+  return touch({
+    ...state,
+    brand: result.state,
+    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), brandSpend: roundMoney(state.finance.brandSpend + result.cost) },
+  }, now);
+}
+
+export function registerProductRelease(state: GameState, draft: ReleaseDraft, now = new Date()): GameState {
+  ensureOperating(state);
+  const batch = getBatch(state, draft.batchId);
+  const result = createRelease(state.brand, draft, batch, state.day);
+  if (state.finance.cash < result.cost) throw new Error('Недостаточно денег на дизайн и подготовку релиза');
+  return touch({
+    ...state,
+    brand: result.state,
+    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), brandSpend: roundMoney(state.finance.brandSpend + result.cost) },
+    world: state.world ? { ...state.world, pulse: [{ id: `pulse-${state.day}-player-release-${result.release.id}`, day: state.day, tone: 'release' as const, title: `${state.brand.brands.find((item) => item.id === result.release.brandId)?.name ?? state.company.name}: новый релиз`, detail: `${result.release.name} вышел на рынок.` }, ...state.world.pulse].slice(0, 12) } : null,
+  }, now);
+}
+
+export function startPromotionCampaign(state: GameState, releaseId: string, type: CampaignType, now = new Date()): GameState {
+  ensureOperating(state);
+  if (!state.world) throw new Error('Рынок недоступен');
+  const result = launchCampaign(state.brand, releaseId, type, state.world.regionId, state.day);
+  if (state.finance.cash < result.cost) throw new Error('Недостаточно денег на кампанию');
+  return touch({
+    ...state,
+    brand: result.state,
+    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), brandSpend: roundMoney(state.finance.brandSpend + result.cost) },
+  }, now);
+}
+
 export function dismissTutorial(state: GameState, now = new Date()): GameState {
   return touch({ ...state, tutorial: { ...state.tutorial, dismissed: true } }, now);
 }
@@ -791,7 +848,8 @@ export function advanceDay(state: GameState, now = new Date()): GameState {
   const nextCash = roundMoney(state.finance.cash - dailyFixedCost);
   const batches = state.production.batches.map((batch) => advanceBatch(batch, nextDay));
   const supplyAdvance = advanceSupplyDay(state.supply, nextDay);
-  let world = state.world ? advanceWorld(state.world, batches, state.company.reputation, nextDay) : null;
+  const brand = advanceBrandDay(state.brand, nextDay);
+  let world = state.world ? advanceWorld(state.world, batches, state.company.reputation, nextDay, brand) : null;
   if (world && supplyAdvance.events.length > 0) {
     world = {
       ...world,
@@ -812,6 +870,7 @@ export function advanceDay(state: GameState, now = new Date()): GameState {
     production: { ...state.production, batches },
     supply: supplyAdvance.supply,
     facility,
+    brand,
     world,
   }, now);
   nextState = tryLaunchQueuedBatch(nextState, now);
@@ -822,31 +881,37 @@ export function migrateGameState(value: unknown): GameState {
   if (!value || typeof value !== 'object') return createInitialState();
   const candidate = value as { schemaVersion?: number; phase?: unknown; company?: unknown; finance?: unknown; production?: unknown };
 
-  if (candidate.schemaVersion === 6 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
+  if (candidate.schemaVersion === 7 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
     return normalizeCurrentState(value as GameState);
+  }
+
+
+  if (candidate.schemaVersion === 6 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
+    const legacy = value as LegacyGameStateV6;
+    return normalizeCurrentState({ ...legacy, schemaVersion: 7, brand: legacy.brand ?? createBrandState() } as GameState);
   }
 
 
   if (candidate.schemaVersion === 5 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
     const legacy = value as LegacyGameStateV5;
     const property = properties.find((item) => item.id === legacy.world?.propertyId);
-    return normalizeCurrentState({ ...legacy, schemaVersion: 6, facility: legacy.facility ?? (property ? createFacilityState({ ...property, propertyDailyCost: property.dailyCost }, legacy.day) : null) } as GameState);
+    return normalizeCurrentState({ ...legacy, schemaVersion: 7, facility: legacy.facility ?? (property ? createFacilityState({ ...property, propertyDailyCost: property.dailyCost }, legacy.day) : null) } as GameState);
   }
 
   if (candidate.schemaVersion === 4 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
     const legacy = value as LegacyGameStateV4;
-    return normalizeCurrentState({ ...legacy, schemaVersion: 6, facility: null, supply: legacy.supply ?? createSupplyState(legacy.day) } as GameState);
+    return normalizeCurrentState({ ...legacy, schemaVersion: 7, facility: null, supply: legacy.supply ?? createSupplyState(legacy.day) } as GameState);
   }
 
   if (candidate.schemaVersion === 3 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
-    return normalizeCurrentState({ ...(value as LegacyGameStateV3), schemaVersion: 6, facility: null, supply: createSupplyState((value as LegacyGameStateV3).day) } as GameState);
+    return normalizeCurrentState({ ...(value as LegacyGameStateV3), schemaVersion: 7, facility: null, supply: createSupplyState((value as LegacyGameStateV3).day) } as GameState);
   }
 
   if (candidate.schemaVersion === 2 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
     const legacy = value as LegacyGameStateV2;
     return normalizeCurrentState({
       ...legacy,
-      schemaVersion: 6,
+      schemaVersion: 7,
       facility: null,
       world: legacy.world ? {
         ...createWorldState(legacy.world.countryId, legacy.world.regionId, legacy.world.propertyId),
@@ -854,6 +919,7 @@ export function migrateGameState(value: unknown): GameState {
         pulse: legacy.world.pulse?.length ? legacy.world.pulse : createInitialPulse(),
       } : null,
       supply: createSupplyState(legacy.day),
+      brand: createBrandState(),
       finance: {
         ...legacy.finance,
         salesRevenue: 0,
@@ -861,6 +927,7 @@ export function migrateGameState(value: unknown): GameState {
         supplySpend: 0,
         facilitySpend: 0,
         maintenanceSpend: 0,
+    brandSpend: 0,
       },
     });
   }
@@ -868,7 +935,7 @@ export function migrateGameState(value: unknown): GameState {
   if (candidate.schemaVersion === 1 && candidate.phase && candidate.company && candidate.finance) {
     const legacy = value as LegacyGameStateV1;
     return {
-      schemaVersion: 6,
+      schemaVersion: 7,
       phase: legacy.phase,
       mode: legacy.mode,
       day: legacy.day,
@@ -881,12 +948,14 @@ export function migrateGameState(value: unknown): GameState {
         supplySpend: 0,
         facilitySpend: 0,
         maintenanceSpend: 0,
+    brandSpend: 0,
         packagedInventoryValue: 0,
         salesRevenue: 0,
         unitsSold: 0,
       },
       production: createProductionState(),
       supply: createSupplyState(legacy.day),
+      brand: createBrandState(),
       facility: legacy.world ? (() => { const property = properties.find((item) => item.id === legacy.world?.propertyId); return property ? createFacilityState({ ...property, propertyDailyCost: property.dailyCost }, legacy.day) : null; })() : null,
       tutorial: { dismissed: false, completedSteps: [] },
       discoveredProductFamilies: legacy.discoveredProductFamilies ?? ['beer', 'cider'],
@@ -928,10 +997,9 @@ function normalizeCurrentState(state: GameState): GameState {
     nextContractNumber: state.world.nextContractNumber ?? 1,
     nextRepeatOrderNumber: state.world.nextRepeatOrderNumber ?? 1,
   } : null;
-  const facility = normalizeFacility(state.facility, state, world);
   return {
     ...state,
-    schemaVersion: 6,
+    schemaVersion: 7,
     finance: {
       ...state.finance,
       salesRevenue: state.finance.salesRevenue ?? 0,
@@ -939,11 +1007,12 @@ function normalizeCurrentState(state: GameState): GameState {
       supplySpend: state.finance.supplySpend ?? 0,
       facilitySpend: state.finance.facilitySpend ?? 0,
       maintenanceSpend: state.finance.maintenanceSpend ?? 0,
-      dailyFixedCost: facility ? facilityDailyCost(facility) : state.finance.dailyFixedCost,
+      brandSpend: state.finance.brandSpend ?? 0,
     },
     production,
+    brand: state.brand ?? createBrandState(),
     supply: state.supply ?? createSupplyState(state.day),
-    facility,
+    facility: normalizeFacility(state.facility, state, world),
     world,
   };
 }
@@ -957,6 +1026,7 @@ function createFinance(cash: number, dailyFixedCost: number): FinanceState {
     supplySpend: 0,
     facilitySpend: 0,
     maintenanceSpend: 0,
+    brandSpend: 0,
     packagedInventoryValue: 0,
     salesRevenue: 0,
     unitsSold: 0,
@@ -1035,7 +1105,7 @@ function touch(state: GameState, now: Date): GameState {
   return { ...state, updatedAt: now.toISOString() };
 }
 
-function advanceWorld(world: WorldState, batches: BatchState[], companyReputation: number, day: number): WorldState {
+function advanceWorld(world: WorldState, batches: BatchState[], companyReputation: number, day: number, brand: BrandState): WorldState {
   let companies = world.companies;
   let outlets = world.outlets;
   let pulse = world.pulse;
@@ -1113,7 +1183,7 @@ function advanceWorld(world: WorldState, batches: BatchState[], companyReputatio
     const outlet = outlets.find((item) => item.id === proposal.outletId);
     const batch = batches.find((item) => item.id === proposal.batchId);
     if (!outlet || !batch) return { ...proposal, status: 'rejected' as const, fitScore: 0, decisionReasons: [...proposal.decisionReasons, 'Закупщик не смог подтвердить происхождение образца.'] };
-    return evaluateProposal(proposal, outlet, batch, companyReputation, getDemandIndex({ demandSignals }, outlet, batch.recipe.family));
+    return evaluateProposal(proposal, outlet, batch, companyReputation, getDemandIndex({ demandSignals }, outlet, batch.recipe.family), commercialScoreForBatch(brand, batch.id, outlet.channel));
   });
 
   const newlyResolved = proposals.filter((proposal) => {

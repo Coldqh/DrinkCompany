@@ -83,7 +83,7 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
             onOpenProduction={() => setTab('production')}
           />
         )}
-        {tab === 'market' && <MarketWorld state={game.state} onSendProposal={game.sendProposal} onAcceptOffer={game.acceptOffer} onDeclineOffer={game.declineOffer} onFulfillOrder={game.fulfillOrder} />}
+        {tab === 'market' && <MarketWorld state={game.state} onSendProposal={game.sendProposal} onAcceptOffer={game.acceptOffer} onDeclineOffer={game.declineOffer} onFulfillOrder={game.fulfillOrder} onCreateBrand={game.createBrand} onCreateRelease={game.createRelease} onLaunchCampaign={game.launchCampaign} />}
         {tab === 'archive' && <ArchiveView state={game.state} version={version} onExport={game.exportSave} onImport={game.importSave} onReset={game.reset} />}
       </main>
 

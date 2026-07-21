@@ -16,8 +16,10 @@ import {
 import type { BatchState } from '../../domain/production';
 import { Icon } from '../../ui/Icon';
 import { CompactHeader, EmptyState, MiniStat, Modal, SubTabs } from '../../ui/MobileUI';
+import { BrandHub } from '../brand/BrandHub';
+import type { BrandDraft, CampaignType, ReleaseDraft } from '../../domain/brand';
 
-type MarketSection = 'sales' | 'orders' | 'deals' | 'world';
+type MarketSection = 'sales' | 'orders' | 'brand' | 'deals' | 'world';
 type OutletFilter = 'local' | 'all' | MarketChannel;
 type OrderSection = 'active' | 'reviews' | 'history';
 type WorldSection = 'companies' | 'releases' | 'pulse';
@@ -28,9 +30,12 @@ interface MarketWorldProps {
   onAcceptOffer: (proposalId: string) => ActionResult;
   onDeclineOffer: (proposalId: string) => ActionResult;
   onFulfillOrder: (orderId: string, batchId: string) => ActionResult;
+  onCreateBrand: (draft: BrandDraft) => ActionResult;
+  onCreateRelease: (draft: ReleaseDraft) => ActionResult;
+  onLaunchCampaign: (releaseId: string, type: CampaignType) => ActionResult;
 }
 
-export function MarketWorld({ state, onSendProposal, onAcceptOffer, onDeclineOffer, onFulfillOrder }: MarketWorldProps) {
+export function MarketWorld({ state, onSendProposal, onAcceptOffer, onDeclineOffer, onFulfillOrder, onCreateBrand, onCreateRelease, onLaunchCampaign }: MarketWorldProps) {
   const world = state.world;
   const packagedBatches = state.production.batches.filter((batch) => batch.status === 'packaged' && batch.availableUnits > 0);
   const [section, setSection] = useState<MarketSection>('sales');
@@ -107,6 +112,7 @@ export function MarketWorld({ state, onSendProposal, onAcceptOffer, onDeclineOff
       <SubTabs value={section} onChange={setSection} options={[
         { id: 'sales', label: 'Сбыт' },
         { id: 'orders', label: 'Заказы', badge: pendingOrders.length },
+        { id: 'brand', label: 'Бренд', badge: state.brand.releases.length },
         { id: 'deals', label: 'Сделки', badge: offers || reviewing },
         { id: 'world', label: 'Мир' },
       ]} />
@@ -178,6 +184,9 @@ export function MarketWorld({ state, onSendProposal, onAcceptOffer, onDeclineOff
           )}
         </>
       )}
+
+
+      {section === 'brand' && <BrandHub state={state} onCreateBrand={onCreateBrand} onCreateRelease={onCreateRelease} onLaunchCampaign={onLaunchCampaign} />}
 
       {section === 'deals' && (
         <>
