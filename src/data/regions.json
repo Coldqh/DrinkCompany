@@ -1,0 +1,62 @@
+[
+  {
+    "id": "bavaria",
+    "countryId": "germany",
+    "name": "Бавария",
+    "climateLabel": "Умеренно прохладный климат",
+    "demandLabel": "Высокий спрос на пиво, сильная конкуренция",
+    "ciderAffinity": 1,
+    "beerAffinity": 5,
+    "energyCostIndex": 3
+  },
+  {
+    "id": "hesse",
+    "countryId": "germany",
+    "name": "Гессен",
+    "climateLabel": "Умеренный климат и яблочные районы",
+    "demandLabel": "Сильная локальная культура яблочных напитков",
+    "ciderAffinity": 5,
+    "beerAffinity": 3,
+    "energyCostIndex": 3
+  },
+  {
+    "id": "normandy",
+    "countryId": "france",
+    "name": "Нормандия",
+    "climateLabel": "Прохладно и влажно",
+    "demandLabel": "Высокая ценность происхождения и сидра",
+    "ciderAffinity": 5,
+    "beerAffinity": 2,
+    "energyCostIndex": 3
+  },
+  {
+    "id": "grand-est",
+    "countryId": "france",
+    "name": "Гранд-Эст",
+    "climateLabel": "Континентальный климат",
+    "demandLabel": "Разнообразный рынок и доступ к соседним странам",
+    "ciderAffinity": 2,
+    "beerAffinity": 4,
+    "energyCostIndex": 4
+  },
+  {
+    "id": "somerset",
+    "countryId": "united-kingdom",
+    "name": "Сомерсет",
+    "climateLabel": "Мягкий влажный климат",
+    "demandLabel": "Сильная сидровая традиция и туристический спрос",
+    "ciderAffinity": 5,
+    "beerAffinity": 3,
+    "energyCostIndex": 4
+  },
+  {
+    "id": "kent",
+    "countryId": "united-kingdom",
+    "name": "Кент",
+    "climateLabel": "Мягкий и сравнительно сухой климат",
+    "demandLabel": "Близость к крупному рынку и дорогая недвижимость",
+    "ciderAffinity": 3,
+    "beerAffinity": 4,
+    "energyCostIndex": 4
+  }
+]
