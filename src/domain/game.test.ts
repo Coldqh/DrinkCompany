@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { advanceDay, startCompany, type PropertyDefinition } from './game';
+import { equipmentCatalog } from '../data/productionCatalog';
+import {
+  advanceDay,
+  migrateGameState,
+  packageProductionBatch,
+  purchaseEquipment,
+  startCompany,
+  startProductionBatch,
+  tasteProductionBatch,
+  type LegacyGameStateV1,
+  type PropertyDefinition,
+} from './game';
+import { createRecipeDraft } from './production';
 
 const property: PropertyDefinition = {
   id: 'property-test',
@@ -9,52 +21,100 @@ const property: PropertyDefinition = {
   acquisition: 'rent',
   upfrontCost: 20_000,
   dailyCost: 180,
-  capacity: 2,
-  energyLimit: 2,
-  storageQuality: 2,
+  capacity: 3,
+  energyLimit: 4,
+  storageQuality: 3,
   marketAccess: 4,
   summary: 'Тест',
 };
 
+function createCompany() {
+  return startCompany({
+    companyName: 'North Glass',
+    mode: 'standard',
+    countryId: 'germany',
+    regionId: 'bavaria',
+    property,
+  }, new Date('2026-01-01T00:00:00.000Z'));
+}
+
 describe('startCompany', () => {
   it('создаёт рабочее состояние и списывает стоимость объекта', () => {
-    const state = startCompany({
-      companyName: 'North Glass',
-      mode: 'standard',
-      countryId: 'de',
-      regionId: 'bavaria',
-      property,
-    }, new Date('2026-01-01T00:00:00.000Z'));
-
+    const state = createCompany();
     expect(state.phase).toBe('operating');
+    expect(state.schemaVersion).toBe(2);
     expect(state.finance.cash).toBe(100_000);
     expect(state.finance.dailyFixedCost).toBe(180);
     expect(state.company.name).toBe('North Glass');
+    expect(state.world?.companies.length).toBeGreaterThanOrEqual(5);
   });
 
   it('отклоняет слишком короткое название', () => {
-    expect(() => startCompany({
-      companyName: 'A',
-      mode: 'standard',
-      countryId: 'de',
-      regionId: 'bavaria',
-      property,
-    })).toThrow('минимум 2 символа');
+    expect(() => startCompany({ companyName: 'A', mode: 'standard', countryId: 'germany', regionId: 'bavaria', property })).toThrow('минимум 2 символа');
   });
 });
 
-describe('advanceDay', () => {
-  it('списывает ежедневные расходы', () => {
-    const state = startCompany({
-      companyName: 'North Glass',
-      mode: 'standard',
-      countryId: 'de',
-      regionId: 'bavaria',
-      property,
-    });
+describe('production cycle', () => {
+  it('покупает линию, запускает партию и проводит её до розлива', () => {
+    let state = createCompany();
+    for (const equipmentId of ['micro-brewhouse', 'fermentation-bank', 'compact-bottler', 'lab-kit']) {
+      const equipment = equipmentCatalog.find((item) => item.id === equipmentId);
+      if (!equipment) throw new Error('test equipment missing');
+      state = purchaseEquipment(state, equipment);
+    }
 
+    const draft = { ...createRecipeDraft('beer'), name: 'Citrus Line', primaryDays: 5, conditioningDays: 3, volumeLiters: 100 };
+    state = startProductionBatch(state, draft, property, equipmentCatalog);
+    expect(state.production.batches[0]?.status).toBe('fermenting');
+    expect(state.production.recipes[0]?.name).toBe('Citrus Line');
+
+    for (let day = 0; day < 8; day += 1) state = advanceDay(state);
+    const readyBatch = state.production.batches[0];
+    expect(readyBatch?.status).toBe('ready');
+    if (!readyBatch) throw new Error('batch missing');
+
+    state = tasteProductionBatch(state, readyBatch.id);
+    expect(state.production.batches[0]?.tasting?.confidence).toBe(88);
+
+    state = packageProductionBatch(state, readyBatch.id);
+    expect(state.production.batches[0]?.status).toBe('packaged');
+    expect(state.production.batches[0]?.packagedUnits).toBeGreaterThan(150);
+    expect(state.company.completedBatches).toBe(1);
+    expect(state.finance.packagedInventoryValue).toBeGreaterThan(0);
+  });
+
+  it('не запускает пиво без обязательного оборудования', () => {
+    const state = createCompany();
+    expect(() => startProductionBatch(state, createRecipeDraft('beer'), property, equipmentCatalog)).toThrow('обязательное оборудование');
+  });
+
+  it('списывает ежедневные расходы и двигает партии по времени', () => {
+    const state = createCompany();
     const next = advanceDay(state);
     expect(next.day).toBe(2);
     expect(next.finance.cash).toBe(state.finance.cash - 180);
+  });
+});
+
+describe('save migration', () => {
+  it('переводит старое сохранение schemaVersion 1 на новую модель', () => {
+    const legacy: LegacyGameStateV1 = {
+      schemaVersion: 1,
+      phase: 'operating',
+      mode: 'standard',
+      day: 4,
+      company: { name: 'Old Cellar', reputation: 2 },
+      world: { countryId: 'germany', regionId: 'hesse', propertyId: 'hesse-workshop' },
+      finance: { cash: 50_000, dailyFixedCost: 170 },
+      discoveredProductFamilies: ['beer', 'cider'],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-04T00:00:00.000Z',
+    };
+
+    const migrated = migrateGameState(legacy);
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.production.batches).toEqual([]);
+    expect(migrated.company.completedBatches).toBe(0);
+    expect(migrated.world?.companies.length).toBeGreaterThan(0);
   });
 });

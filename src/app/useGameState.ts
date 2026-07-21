@@ -1,28 +1,62 @@
-import { useCallback, useEffect, useState } from 'react';
-import { advanceDay, createInitialState, startCompany, type GameState, type NewGameSelection } from '../domain/game';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { equipmentCatalog, getEquipment } from '../data/productionCatalog';
+import { properties } from '../data/catalog';
+import {
+  advanceDay,
+  createInitialState,
+  discardProductionBatch,
+  dismissTutorial,
+  packageProductionBatch,
+  purchaseEquipment,
+  saveRecipe,
+  startCompany,
+  startProductionBatch,
+  tasteProductionBatch,
+  type GameState,
+  type NewGameSelection,
+} from '../domain/game';
+import type { RecipeDraft } from '../domain/production';
 import { loadGameState, parseGameState, saveGameState, serializeGameState } from '../infrastructure/gameStateRepository';
+
+export interface ActionResult {
+  ok: boolean;
+  message: string;
+}
 
 export interface GameController {
   state: GameState;
   isReady: boolean;
   saveStatus: 'idle' | 'saving' | 'saved' | 'error';
-  createCompany: (selection: NewGameSelection) => void;
-  nextDay: () => void;
+  createCompany: (selection: NewGameSelection) => ActionResult;
+  nextDay: () => ActionResult;
   reset: () => void;
   exportSave: () => void;
   importSave: (file: File) => Promise<void>;
+  buyEquipment: (equipmentId: string) => ActionResult;
+  saveRecipeDraft: (draft: RecipeDraft) => ActionResult;
+  launchBatch: (draft: RecipeDraft) => ActionResult;
+  tasteBatch: (batchId: string) => ActionResult;
+  packageBatch: (batchId: string) => ActionResult;
+  discardBatch: (batchId: string) => ActionResult;
+  hideTutorial: () => void;
 }
 
 export function useGameState(): GameController {
   const [state, setState] = useState<GameState>(() => createInitialState());
+  const stateRef = useRef(state);
   const [isReady, setIsReady] = useState(false);
   const [saveStatus, setSaveStatus] = useState<GameController['saveStatus']>('idle');
+
+  const replaceState = useCallback((next: GameState) => {
+    stateRef.current = next;
+    setState(next);
+  }, []);
 
   useEffect(() => {
     let active = true;
     void loadGameState()
       .then((loaded) => {
-        if (active) setState(loaded);
+        if (active) replaceState(loaded);
       })
       .finally(() => {
         if (active) setIsReady(true);
@@ -30,7 +64,7 @@ export function useGameState(): GameController {
     return () => {
       active = false;
     };
-  }, []);
+  }, [replaceState]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -43,27 +77,92 @@ export function useGameState(): GameController {
     return () => window.clearTimeout(timer);
   }, [isReady, state]);
 
-  const createCompany = useCallback((selection: NewGameSelection) => {
-    setState(startCompany(selection));
-  }, []);
+  const perform = useCallback((transition: (current: GameState) => GameState, successMessage: string): ActionResult => {
+    try {
+      const next = transition(stateRef.current);
+      replaceState(next);
+      return { ok: true, message: successMessage };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Действие не выполнено' };
+    }
+  }, [replaceState]);
 
-  const nextDay = useCallback(() => setState((current) => advanceDay(current)), []);
-  const reset = useCallback(() => setState(createInitialState()), []);
+  const createCompany = useCallback((selection: NewGameSelection) => (
+    perform(() => startCompany(selection), 'Компания открыта')
+  ), [perform]);
+
+  const nextDay = useCallback(() => (
+    perform((current) => advanceDay(current), 'День завершён')
+  ), [perform]);
+
+  const buyEquipment = useCallback((equipmentId: string) => {
+    const equipment = getEquipment(equipmentId);
+    return perform((current) => purchaseEquipment(current, equipment), `${equipment.name} установлено`);
+  }, [perform]);
+
+  const saveRecipeDraft = useCallback((draft: RecipeDraft) => (
+    perform((current) => saveRecipe(current, draft), `Рецепт «${draft.name}» сохранён`)
+  ), [perform]);
+
+  const launchBatch = useCallback((draft: RecipeDraft) => {
+    const current = stateRef.current;
+    const property = properties.find((item) => item.id === current.world?.propertyId);
+    if (!property) return { ok: false, message: 'Объект производства не найден' };
+    return perform(
+      (game) => startProductionBatch(game, draft, property, equipmentCatalog),
+      `Партия «${draft.name}» запущена`,
+    );
+  }, [perform]);
+
+  const tasteBatchAction = useCallback((batchId: string) => (
+    perform((current) => tasteProductionBatch(current, batchId), 'Дегустация завершена')
+  ), [perform]);
+
+  const packageBatchAction = useCallback((batchId: string) => (
+    perform((current) => packageProductionBatch(current, batchId), 'Партия разлита и готова к продажам')
+  ), [perform]);
+
+  const discardBatchAction = useCallback((batchId: string) => (
+    perform((current) => discardProductionBatch(current, batchId), 'Партия списана')
+  ), [perform]);
+
+  const hideTutorial = useCallback(() => {
+    replaceState(dismissTutorial(stateRef.current));
+  }, [replaceState]);
+
+  const reset = useCallback(() => replaceState(createInitialState()), [replaceState]);
 
   const exportSave = useCallback(() => {
-    const blob = new Blob([serializeGameState(state)], { type: 'application/json' });
+    const current = stateRef.current;
+    const blob = new Blob([serializeGameState(current)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `drink-company-day-${state.day}.json`;
+    anchor.download = `drink-company-day-${current.day}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
-  }, [state]);
+  }, []);
 
   const importSave = useCallback(async (file: File) => {
     const serialized = await file.text();
-    setState(parseGameState(serialized));
-  }, []);
+    replaceState(parseGameState(serialized));
+  }, [replaceState]);
 
-  return { state, isReady, saveStatus, createCompany, nextDay, reset, exportSave, importSave };
+  return {
+    state,
+    isReady,
+    saveStatus,
+    createCompany,
+    nextDay,
+    reset,
+    exportSave,
+    importSave,
+    buyEquipment,
+    saveRecipeDraft,
+    launchBatch,
+    tasteBatch: tasteBatchAction,
+    packageBatch: packageBatchAction,
+    discardBatch: discardBatchAction,
+    hideTutorial,
+  };
 }

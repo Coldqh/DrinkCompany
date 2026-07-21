@@ -1,4 +1,4 @@
-import { createInitialState, type GameState } from '../domain/game';
+import { createInitialState, migrateGameState, type GameState } from '../domain/game';
 
 const DATABASE_NAME = 'drink-company';
 const DATABASE_VERSION = 1;
@@ -24,10 +24,7 @@ export async function loadGameState(): Promise<GameState> {
   return new Promise((resolve, reject) => {
     const transaction = database.transaction(STORE_NAME, 'readonly');
     const request = transaction.objectStore(STORE_NAME).get(STATE_KEY);
-    request.onsuccess = () => {
-      const value = request.result as GameState | undefined;
-      resolve(value?.schemaVersion === 1 ? value : createInitialState());
-    };
+    request.onsuccess = () => resolve(request.result ? migrateGameState(request.result) : createInitialState());
     request.onerror = () => reject(request.error ?? new Error('Не удалось прочитать сохранение'));
     transaction.oncomplete = () => database.close();
   });
@@ -51,9 +48,13 @@ export function serializeGameState(state: GameState): string {
 }
 
 export function parseGameState(serialized: string): GameState {
-  const parsed = JSON.parse(serialized) as Partial<GameState>;
-  if (parsed.schemaVersion !== 1 || !parsed.phase || !parsed.company || !parsed.finance) {
-    throw new Error('Файл не является сохранением Drink Company');
+  try {
+    const parsed = JSON.parse(serialized) as { schemaVersion?: number };
+    if (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) throw new Error('Файл не является сохранением Drink Company');
+    const migrated = migrateGameState(parsed);
+    return migrated;
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error('Файл сохранения повреждён');
+    throw error;
   }
-  return parsed as GameState;
 }
