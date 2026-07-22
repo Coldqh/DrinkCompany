@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "/mnt/data/ecosystem-check",
+    "rootDir": "src",
+    "types": []
+  },
+  "include": [
+    "src/domain/**/*.ts",
+    "src/data/**/*.ts",
+    "src/infrastructure/gameStateRepository.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
+  ]
+}

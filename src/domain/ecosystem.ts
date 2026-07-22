@@ -20,6 +20,7 @@ import {
 import type { MarketOutletState } from './market';
 import { suppliers } from '../data/supplyCatalog';
 import { advanceTradeDay, createTradeState, normalizeTradeState, type TradeState } from './trade';
+import { advanceKernelDay, createEcosystemKernel, normalizeEcosystemKernel, synchronizeKernelFromTrade, type EcosystemKernelState } from './kernel';
 import {
   advanceWorldIntelligence,
   createWorldIntelligenceState,
@@ -124,6 +125,7 @@ export interface EcosystemState {
   nextRetailReportNumber: number;
   trade: TradeState;
   intelligence: WorldIntelligenceState;
+  kernel: EcosystemKernelState;
 }
 
 export interface EcosystemAdvanceResult {
@@ -366,6 +368,14 @@ export function createEcosystemState(input: {
 
   const organizations = [player, ...companyOrganizations, ...supplierOrganizations, ...outletOrganizations, ...landlordOrganizations];
   const assets = [playerAsset, ...producerAssets, ...supplierAssets, ...outletAssets, ...vacantAssets];
+  const trade = createTradeState(organizations, assets, input.day);
+  const kernel = createEcosystemKernel({
+    day: input.day,
+    seedText: `${input.playerCompanyName}:${input.countryId}:${input.regionId}`,
+    organizations,
+    assets,
+    trade,
+  });
   return {
     playerOrganizationId,
     organizations,
@@ -379,8 +389,9 @@ export function createEcosystemState(input: {
     nextTransactionNumber: 1,
     nextRetailStockNumber: 1,
     nextRetailReportNumber: 1,
-    trade: createTradeState(organizations, assets, input.day),
+    trade,
     intelligence: createWorldIntelligenceState(organizations, input.day),
+    kernel,
   };
 }
 
@@ -440,7 +451,20 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
   const trade = state.trade && Array.isArray(state.trade.products)
     ? normalizeTradeState(state.trade)
     : createTradeState(state.organizations, state.assets, day);
-  return { ...state, subsidiaries: state.subsidiaries ?? [], trade, intelligence: normalizeWorldIntelligenceState(state.intelligence, state.organizations, day) };
+  const kernel = normalizeEcosystemKernel(state.kernel, {
+    day,
+    seedText: `${state.playerOrganizationId}:${state.organizations.length}:${state.assets.length}`,
+    organizations: state.organizations,
+    assets: state.assets,
+    trade,
+  });
+  return {
+    ...state,
+    subsidiaries: state.subsidiaries ?? [],
+    trade,
+    kernel,
+    intelligence: normalizeWorldIntelligenceState(state.intelligence, state.organizations, day),
+  };
 }
 
 export function ecosystemPlayerDailyCost(state: EcosystemState): number {
@@ -772,6 +796,24 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   if (dividend >= 1) events.push({ tone: 'market', title: 'Группа получила дивиденды', detail: `Контролируемые и миноритарные доли перечислили ${roundMoney(dividend)}.` });
 
   ecosystem = { ...ecosystem, organizations, assets, transactions, nextTransactionNumber };
+  ecosystem = {
+    ...ecosystem,
+    kernel: synchronizeKernelFromTrade(
+      advanceKernelDay(
+        normalizeEcosystemKernel(ecosystem.kernel, {
+          day,
+          seedText: `${ecosystem.playerOrganizationId}:${ecosystem.organizations.length}:${ecosystem.assets.length}`,
+          organizations: ecosystem.organizations,
+          assets: ecosystem.assets,
+          trade: ecosystem.trade,
+        }),
+        day,
+        ecosystem.trade,
+      ),
+      ecosystem.trade,
+      day,
+    ),
+  };
   const intelligenceAdvance = advanceWorldIntelligence(ecosystem, day);
   ecosystem = intelligenceAdvance.ecosystem;
   events.push(...intelligenceAdvance.events);

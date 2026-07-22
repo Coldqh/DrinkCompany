@@ -1,4 +1,5 @@
 import { ingredients, supplierOffers, type IngredientUnit } from '../data/supplyCatalog';
+import type { BeverageCategoryId } from '../data/beverageCatalog';
 import type { OrganizationState, WorldAssetState } from './ecosystem';
 
 export type TradeCommodityKind = 'ingredient' | 'product';
@@ -28,6 +29,7 @@ export interface TradeProductState {
   producerOrganizationId: string;
   name: string;
   family: TradeProductFamily;
+  beverageCategoryId?: BeverageCategoryId;
   style: string;
   quality: number;
   unitCost: number;
@@ -572,7 +574,7 @@ export function normalizeTradeState(value: TradeState | null | undefined): Trade
   };
   return {
     inventory: value.inventory ?? [],
-    products: value.products ?? [],
+    products: (value.products ?? []).map((product) => ({ ...product, beverageCategoryId: product.beverageCategoryId ?? legacyCategoryForFamily(product.family) })),
     batches: value.batches ?? [],
     contracts: value.contracts ?? [],
     shipments: value.shipments ?? [],
@@ -611,6 +613,7 @@ function createSeedProduct(producer: OrganizationState, family: TradeProductFami
     producerOrganizationId: producer.id,
     name: producer.strategy.includes('безалког') ? 'Hop Zero' : (namePool[number % namePool.length] ?? 'House Release'),
     family,
+    beverageCategoryId: legacyCategoryForFamily(family),
     style: producer.strategy,
     quality: baseQuality,
     unitCost,
@@ -623,6 +626,13 @@ function createSeedProduct(producer: OrganizationState, family: TradeProductFami
     stockoutDays: 0,
     createdDay: day,
   };
+}
+
+
+function legacyCategoryForFamily(family: TradeProductFamily): BeverageCategoryId {
+  if (family === 'wine') return 'still_wine';
+  if (family === 'spirit') return 'whisky';
+  return family;
 }
 
 function familyForOrganization(organization: Pick<OrganizationState, 'strategy' | 'name'>): TradeProductFamily {
