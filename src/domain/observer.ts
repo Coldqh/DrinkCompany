@@ -1,5 +1,6 @@
 import { advanceDay, type GameState } from './game';
 import { auditKernel } from './kernel';
+import { auditQuality } from './quality';
 
 export interface ObserverSimulationReport {
   daysSimulated: number;
@@ -30,6 +31,11 @@ export interface ObserverSimulationReport {
   deliveredFreightJobs: number;
   queuedFreightJobs: number;
   logisticsOperations: number;
+  qualityLaboratories: number;
+  qualitySamples: number;
+  qualityCertificates: number;
+  qualityIncidents: number;
+  recalledUnits: number;
   finalPlayerCash: number;
   violations: string[];
 }
@@ -99,6 +105,11 @@ export function runObserverSimulation(initial: GameState, days: number, options:
         deliveredFreightJobs: 0,
         queuedFreightJobs: 0,
         logisticsOperations: 0,
+        qualityLaboratories: 0,
+        qualitySamples: 0,
+        qualityCertificates: 0,
+        qualityIncidents: 0,
+        recalledUnits: 0,
         finalPlayerCash: state.finance.cash,
         violations: state.phase === 'operating' ? ['Operating state has no ecosystem'] : [],
       },
@@ -127,6 +138,7 @@ export function runObserverSimulation(initial: GameState, days: number, options:
   if (ecosystem.logistics.jobs.some((job) => job.transportCost < 0 || job.insuranceCost < 0 || job.damageUnits < 0)) violations.push('Некорректные показатели перевозки');
   if (ecosystem.logistics.fleet.some((vehicle) => vehicle.capacity <= 0 || vehicle.condition < 0 || vehicle.condition > 100)) violations.push('Некорректное состояние автопарка');
   if (ecosystem.logistics.jobs.some((job) => job.status === 'delivered' && job.deliveredDay === null)) violations.push('Доставленный рейс без даты завершения');
+  violations.push(...auditQuality(ecosystem.quality, ecosystem.trade));
   const licenseIds = new Set(ecosystem.regulation.licenses.map((license) => license.id));
   if (licenseIds.size !== ecosystem.regulation.licenses.length) violations.push('Дублирующиеся регуляторные лицензии');
   return {
@@ -160,6 +172,11 @@ export function runObserverSimulation(initial: GameState, days: number, options:
       deliveredFreightJobs: ecosystem.logistics.carriers.reduce((sum, carrier) => sum + carrier.deliveredJobs, 0),
       queuedFreightJobs: ecosystem.logistics.jobs.filter((job) => job.status === 'queued').length,
       logisticsOperations: ecosystem.logistics.operations.length,
+      qualityLaboratories: ecosystem.quality.laboratories.length,
+      qualitySamples: ecosystem.quality.samples.length,
+      qualityCertificates: ecosystem.quality.certificates.length,
+      qualityIncidents: ecosystem.quality.incidents.length,
+      recalledUnits: ecosystem.quality.recalls.reduce((sum, recall) => sum + recall.destroyedUnits, 0),
       finalPlayerCash: state.finance.cash,
       violations,
     },

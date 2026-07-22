@@ -10,6 +10,12 @@ export type TradeContractStatus = 'active' | 'paused' | 'broken';
 export type TradeBatchStatus = 'producing' | 'ready' | 'blocked';
 export type TradeProductStatus = 'active' | 'paused' | 'discontinued';
 export type TradeOperationKind = 'purchase' | 'production' | 'delivery' | 'sale' | 'shortage' | 'stockout' | 'release' | 'discontinued';
+export type TradeLotStatus = 'available' | 'quarantined' | 'recalled' | 'destroyed';
+
+export interface TradeLotAllocation {
+  lotId: string;
+  quantity: number;
+}
 
 export interface TradeInventoryLot {
   id: string;
@@ -23,6 +29,10 @@ export interface TradeInventoryLot {
   originOrganizationId: string;
   receivedDay: number;
   expiresDay: number | null;
+  status?: TradeLotStatus;
+  sourceLotIds?: string[];
+  productionBatchId?: string | null;
+  lotCode?: string;
 }
 
 export interface TradeProductState {
@@ -92,6 +102,7 @@ export interface TradeShipmentState {
   arrivalDay: number;
   status: TradeShipmentStatus;
   note: string;
+  lotAllocations?: TradeLotAllocation[];
 }
 
 export interface TradeShelfListingState {
@@ -106,6 +117,8 @@ export interface TradeShelfListingState {
   totalUnitsSold: number;
   lastRestockDay: number;
   stockoutDays: number;
+  lotAllocations?: TradeLotAllocation[];
+  soldLotAllocationsToday?: TradeLotAllocation[];
 }
 
 export interface TradeOperationState {
@@ -297,6 +310,7 @@ export function createTradeState(organizations: OrganizationState[], assets: Wor
       totalUnitsSold: 0,
       lastRestockDay: day,
       stockoutDays: 0,
+      lotAllocations: [{ lotId: `seed-shelf-lot:${nextShelfNumber - 1}`, quantity: initialUnits }],
     });
     contracts.push({
       id: `trade-contract-${nextContractNumber++}`,
@@ -397,6 +411,10 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
         originOrganizationId: shipment.sellerOrganizationId,
         receivedDay: day,
         expiresDay: ingredient ? day + ingredient.shelfLifeDays : null,
+        status: 'available',
+        sourceLotIds: shipment.lotAllocations?.map((allocation) => allocation.lotId) ?? [],
+        productionBatchId: null,
+        lotCode: `IN-${shipment.id}`,
       });
     } else if (shipment.buyerAssetId) {
       const product = trade.products.find((item) => item.id === shipment.commodityId);
@@ -407,6 +425,7 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
           existing.units += shipment.quantity;
           existing.lastRestockDay = day;
           existing.stockoutDays = 0;
+          existing.lotAllocations = mergeLotAllocations(existing.lotAllocations ?? [], shipment.lotAllocations ?? [{ lotId: `shipment-lot:${shipment.id}`, quantity: shipment.quantity }]);
         } else if (product) {
           trade.shelves.push({
             id: `trade-shelf-${trade.nextShelfNumber++}`,
@@ -420,13 +439,14 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
             totalUnitsSold: 0,
             lastRestockDay: day,
             stockoutDays: 0,
+            lotAllocations: shipment.lotAllocations ?? [{ lotId: `shipment-lot:${shipment.id}`, quantity: shipment.quantity }],
           });
         }
       } else {
-        addInventory(trade, shipment.buyerOrganizationId, 'product', shipment.commodityId, shipment.quantity, shipment.unitPrice, shipment.sellerOrganizationId, day);
+        addInventory(trade, shipment.buyerOrganizationId, 'product', shipment.commodityId, shipment.quantity, shipment.unitPrice, shipment.sellerOrganizationId, day, { forceNew: true, sourceLotIds: shipment.lotAllocations?.map((allocation) => allocation.lotId) ?? [], lotCode: `IN-${shipment.id}` });
       }
     } else {
-      addInventory(trade, shipment.buyerOrganizationId, 'product', shipment.commodityId, shipment.quantity, shipment.unitPrice, shipment.sellerOrganizationId, day);
+      addInventory(trade, shipment.buyerOrganizationId, 'product', shipment.commodityId, shipment.quantity, shipment.unitPrice, shipment.sellerOrganizationId, day, { forceNew: true, sourceLotIds: shipment.lotAllocations?.map((allocation) => allocation.lotId) ?? [], lotCode: `IN-${shipment.id}` });
     }
   }
 
@@ -440,7 +460,7 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
       if (product && listing.units <= 0 && stockoutDays === 2) {
         record('stockout', operator?.id ?? product.producerOrganizationId, product.producerOrganizationId, asset?.id ?? null, `Пустая полка: ${product.name}`, `${asset?.name ?? 'Точка'} потеряла продажи из-за отсутствия товара.`);
       }
-      return { ...listing, unitsSoldToday: 0, revenueToday: 0, stockoutDays };
+      return { ...listing, unitsSoldToday: 0, revenueToday: 0, stockoutDays, soldLotAllocationsToday: [] };
     }
     const demandResult = calculateShelfDemand(nextDemand, {
       day,
@@ -457,6 +477,7 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
     });
     const sold = Math.min(listing.units, demandResult.units);
     const saleRevenue = roundMoney(sold * listing.retailPrice);
+    const allocationResult = consumeLotAllocations(listing.lotAllocations ?? [{ lotId: `shelf-lot:${listing.id}`, quantity: listing.units }], sold);
     if (sold > 0) {
       addMoneyDelta(revenue, operator.id, saleRevenue);
       product.totalSold += sold;
@@ -482,6 +503,8 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
       revenueToday: saleRevenue,
       totalUnitsSold: listing.totalUnitsSold + sold,
       stockoutDays: listing.units - sold <= 0 ? listing.stockoutDays + 1 : 0,
+      lotAllocations: allocationResult.remaining,
+      soldLotAllocationsToday: allocationResult.consumed,
     };
   });
 
@@ -490,7 +513,12 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
     if (batch.status !== 'producing' || batch.readyDay > day) return batch;
     const product = trade.products.find((item) => item.id === batch.productId);
     if (!product) return { ...batch, status: 'blocked', issue: 'Продукт больше не существует' };
-    addInventory(trade, batch.producerOrganizationId, 'product', product.id, batch.plannedUnits, product.unitCost, batch.producerOrganizationId, day);
+    addInventory(trade, batch.producerOrganizationId, 'product', product.id, batch.plannedUnits, product.unitCost, batch.producerOrganizationId, day, {
+      forceNew: true,
+      sourceLotIds: batch.ingredientLotIds,
+      productionBatchId: batch.id,
+      lotCode: `PK-${product.id}-${batch.id}`,
+    });
     product.totalProduced += batch.plannedUnits;
     record('production', batch.producerOrganizationId, null, null, `Готова партия ${product.name}`, `${batch.plannedUnits} бутылок поступили на склад производителя.`, batch.cost);
     return { ...batch, status: 'ready', producedUnits: batch.plannedUnits, issue: null };
@@ -581,7 +609,7 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
       if (failures >= 3) events.push({ tone: 'warning', title: 'Разрыв в цепочке поставок', detail: `${commodityName(trade, contract.commodityKind, contract.commodityId)} не поставляется третий цикл подряд.` });
       return { ...contract, failures, nextDeliveryDay: day + 1, lastResult: 'Дефицит у поставщика' };
     }
-    consumeInventory(trade, contract.sellerOrganizationId, contract.commodityKind, contract.commodityId, contract.quantity);
+    const reserved = consumeInventory(trade, contract.sellerOrganizationId, contract.commodityKind, contract.commodityId, contract.quantity);
     trade.shipments.push({
       id: `trade-shipment-${trade.nextShipmentNumber++}`,
       contractId: contract.id,
@@ -597,6 +625,7 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
       arrivalDay: day,
       status: 'awaiting_transport',
       note: 'Ожидает назначения перевозчика',
+      lotAllocations: reserved.allocations,
     });
     record('purchase', contract.sellerOrganizationId, contract.buyerOrganizationId, contract.buyerAssetId, `Отправлен товар`, `${commodityName(trade, contract.commodityKind, contract.commodityId)} · ${contract.quantity} ед.`, contract.quantity * contract.unitPrice);
     return { ...contract, failures: 0, nextDeliveryDay: day + contract.intervalDays, lastResult: 'Передано в логистическую очередь' };
@@ -664,12 +693,12 @@ export function normalizeTradeState(value: TradeState | null | undefined): Trade
     nextShipmentNumber: 1, nextShelfNumber: 1, nextOperationNumber: 1,
   };
   return {
-    inventory: value.inventory ?? [],
+    inventory: (value.inventory ?? []).map((lot) => ({ ...lot, status: lot.status ?? 'available', sourceLotIds: lot.sourceLotIds ?? [], productionBatchId: lot.productionBatchId ?? null, lotCode: lot.lotCode ?? `LOT-${lot.id}` })),
     products: (value.products ?? []).map((product) => { const categoryId = product.beverageCategoryId ?? legacyCategoryForFamily(product.family); return ({ ...product, beverageCategoryId: categoryId, alcoholByVolume: Number.isFinite(product.alcoholByVolume) ? product.alcoholByVolume : defaultAbvForCategory(categoryId), packageVolumeLiters: Number.isFinite(product.packageVolumeLiters) ? product.packageVolumeLiters : defaultPackageVolumeForCategory(categoryId) }); }),
     batches: value.batches ?? [],
     contracts: (value.contracts ?? []).map((contract) => ({ ...contract, sellerAssetId: contract.sellerAssetId ?? null })),
-    shipments: (value.shipments ?? []).map((shipment) => ({ ...shipment, sellerAssetId: shipment.sellerAssetId ?? null })),
-    shelves: value.shelves ?? [],
+    shipments: (value.shipments ?? []).map((shipment) => ({ ...shipment, sellerAssetId: shipment.sellerAssetId ?? null, lotAllocations: shipment.lotAllocations ?? [] })),
+    shelves: (value.shelves ?? []).map((shelf) => ({ ...shelf, lotAllocations: shelf.lotAllocations ?? [{ lotId: `legacy-shelf-lot:${shelf.id}`, quantity: shelf.units }], soldLotAllocationsToday: shelf.soldLotAllocationsToday ?? [] })),
     operations: value.operations ?? [],
     nextInventoryNumber: value.nextInventoryNumber ?? 1,
     nextProductNumber: value.nextProductNumber ?? 1,
@@ -691,12 +720,12 @@ export function commodityName(state: Pick<TradeState, 'products'>, kind: TradeCo
 }
 
 export function inventoryQuantity(state: Pick<TradeState, 'inventory'>, organizationId: string, kind: TradeCommodityKind, commodityId: string): number {
-  return roundQuantity(state.inventory.filter((lot) => lot.organizationId === organizationId && lot.commodityKind === kind && lot.commodityId === commodityId).reduce((sum, lot) => sum + lot.quantity, 0));
+  return roundQuantity(state.inventory.filter((lot) => lot.organizationId === organizationId && lot.commodityKind === kind && lot.commodityId === commodityId && (lot.status ?? 'available') === 'available').reduce((sum, lot) => sum + lot.quantity, 0));
 }
 
 export function restoreShipmentInventory(state: TradeState, shipment: TradeShipmentState, day: number): TradeState {
   const next = { ...state, inventory: state.inventory.map((lot) => ({ ...lot })) };
-  addInventory(next, shipment.sellerOrganizationId, shipment.commodityKind, shipment.commodityId, shipment.quantity, shipment.unitPrice, shipment.sellerOrganizationId, day);
+  addInventory(next, shipment.sellerOrganizationId, shipment.commodityKind, shipment.commodityId, shipment.quantity, shipment.unitPrice, shipment.sellerOrganizationId, day, { forceNew: true, sourceLotIds: shipment.lotAllocations?.map((allocation) => allocation.lotId) ?? [], lotCode: `RETURN-${shipment.id}` });
   return next;
 }
 
@@ -797,15 +826,23 @@ function offerForSupplierIngredient(organizationId: string, ingredientId: string
   return supplierOffers.find((item) => item.supplierId === supplierId && item.ingredientId === ingredientId);
 }
 
-function addInventory(state: TradeState, organizationId: string, kind: TradeCommodityKind, commodityId: string, quantity: number, unitCost: number, originOrganizationId: string, day: number): void {
-  const existing = state.inventory.find((lot) => lot.organizationId === organizationId && lot.commodityKind === kind && lot.commodityId === commodityId && lot.unitCost === unitCost);
+interface AddInventoryOptions {
+  forceNew?: boolean;
+  sourceLotIds?: string[];
+  productionBatchId?: string | null;
+  lotCode?: string;
+}
+
+function addInventory(state: TradeState, organizationId: string, kind: TradeCommodityKind, commodityId: string, quantity: number, unitCost: number, originOrganizationId: string, day: number, options: AddInventoryOptions = {}): string {
+  const existing = !options.forceNew ? state.inventory.find((lot) => lot.organizationId === organizationId && lot.commodityKind === kind && lot.commodityId === commodityId && lot.unitCost === unitCost && (lot.status ?? 'available') === 'available' && (lot.sourceLotIds ?? []).length === 0) : undefined;
   if (existing) {
     existing.quantity = roundQuantity(existing.quantity + quantity);
-    return;
+    return existing.id;
   }
   const ingredient = kind === 'ingredient' ? ingredients.find((item) => item.id === commodityId) : null;
+  const id = `trade-lot-${state.nextInventoryNumber++}`;
   state.inventory.push({
-    id: `trade-lot-${state.nextInventoryNumber++}`,
+    id,
     organizationId,
     commodityKind: kind,
     commodityId,
@@ -816,15 +853,21 @@ function addInventory(state: TradeState, organizationId: string, kind: TradeComm
     originOrganizationId,
     receivedDay: day,
     expiresDay: kind === 'ingredient' && ingredient ? day + ingredient.shelfLifeDays : day + 280,
+    status: 'available',
+    sourceLotIds: options.sourceLotIds ?? [],
+    productionBatchId: options.productionBatchId ?? null,
+    lotCode: options.lotCode ?? `LOT-${id}`,
   });
+  return id;
 }
 
-function consumeInventory(state: TradeState, organizationId: string, kind: TradeCommodityKind, commodityId: string, quantity: number): { cost: number; lotIds: string[] } {
+function consumeInventory(state: TradeState, organizationId: string, kind: TradeCommodityKind, commodityId: string, quantity: number): { cost: number; lotIds: string[]; allocations: TradeLotAllocation[] } {
   let remaining = quantity;
   let cost = 0;
   const lotIds: string[] = [];
+  const allocations: TradeLotAllocation[] = [];
   const lots = state.inventory
-    .filter((lot) => lot.organizationId === organizationId && lot.commodityKind === kind && lot.commodityId === commodityId && lot.quantity > 0)
+    .filter((lot) => lot.organizationId === organizationId && lot.commodityKind === kind && lot.commodityId === commodityId && lot.quantity > 0 && (lot.status ?? 'available') === 'available')
     .sort((a, b) => (a.expiresDay ?? Infinity) - (b.expiresDay ?? Infinity));
   for (const lot of lots) {
     if (remaining <= 0) break;
@@ -833,8 +876,28 @@ function consumeInventory(state: TradeState, organizationId: string, kind: Trade
     remaining = roundQuantity(remaining - used);
     cost += used * lot.unitCost;
     lotIds.push(lot.id);
+    allocations.push({ lotId: lot.id, quantity: used });
   }
-  return { cost: roundMoney(cost), lotIds };
+  return { cost: roundMoney(cost), lotIds, allocations };
+}
+
+function mergeLotAllocations(current: TradeLotAllocation[], incoming: TradeLotAllocation[]): TradeLotAllocation[] {
+  const byLot = new Map(current.map((allocation) => [allocation.lotId, allocation.quantity]));
+  for (const allocation of incoming) byLot.set(allocation.lotId, roundQuantity((byLot.get(allocation.lotId) ?? 0) + allocation.quantity));
+  return [...byLot.entries()].map(([lotId, quantity]) => ({ lotId, quantity })).filter((allocation) => allocation.quantity > 0);
+}
+
+function consumeLotAllocations(current: TradeLotAllocation[], quantity: number): { remaining: TradeLotAllocation[]; consumed: TradeLotAllocation[] } {
+  let pending = quantity;
+  const consumed: TradeLotAllocation[] = [];
+  const remaining = current.map((allocation) => {
+    if (pending <= 0) return allocation;
+    const used = Math.min(pending, allocation.quantity);
+    pending = roundQuantity(pending - used);
+    if (used > 0) consumed.push({ lotId: allocation.lotId, quantity: used });
+    return { ...allocation, quantity: roundQuantity(allocation.quantity - used) };
+  }).filter((allocation) => allocation.quantity > 0);
+  return { remaining, consumed };
 }
 
 function baseOperatingCost(organization: OrganizationState): number {

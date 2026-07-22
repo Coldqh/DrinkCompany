@@ -99,7 +99,10 @@ function buildDecisions(state: GameState): DecisionItem[] {
   const overdueExcise = state.ecosystem?.regulation.obligations.filter((item) => item.organizationId === playerOrganizationId && item.status === 'overdue') ?? [];
   const freightHolds = state.ecosystem?.trade.shipments.filter((shipment) => shipment.status === 'customs_hold' || shipment.status === 'delayed') ?? [];
   const freightQueue = state.ecosystem?.logistics.jobs.filter((job) => job.status === 'queued' && state.day - job.createdDay >= 2) ?? [];
+  const qualityIncidents = state.ecosystem?.quality.incidents.filter((incident) => incident.organizationId === playerOrganizationId && incident.status !== 'closed') ?? [];
+  const activeRecalls = state.ecosystem?.quality.recalls.filter((recall) => recall.responsibleOrganizationId === playerOrganizationId && recall.status === 'active') ?? [];
 
+  if (qualityIncidents.length > 0 || activeRecalls.length > 0) items.push({ id: 'quality', title: 'Проблема качества продукта', detail: `${qualityIncidents.length} инцидентов · ${activeRecalls.length} активных отзывов.`, target: 'world', icon: 'warning', urgent: true });
   if (regulatoryViolations.length > 0 || overdueExcise.length > 0) items.push({ id: 'regulation', title: 'Регулятор требует внимания', detail: `${regulatoryViolations.length} нарушений · просрочено ${overdueExcise.length} обязательств · комплаенс ${compliance?.score ?? 100}/100.`, target: 'company', icon: 'warning', urgent: true });
   if (freightHolds.length > 0 || freightQueue.length > 0) items.push({ id: 'freight', title: 'Логистика требует внимания', detail: `${freightHolds.length} задержано · ${freightQueue.length} долго ждут транспорт.`, target: 'world', icon: 'warning', urgent: freightHolds.length > 0 });
   if (offers.length > 0) items.push({ id: 'offers', title: `${offers.length} коммерческих оффера`, detail: 'Принять условия или отказаться.', target: 'trade', icon: 'contract', urgent: true });
