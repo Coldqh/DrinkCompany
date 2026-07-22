@@ -18,6 +18,8 @@ import {
   type RetailVenueType,
 } from './retail';
 import type { MarketOutletState } from './market';
+import { suppliers } from '../data/supplyCatalog';
+import { advanceTradeDay, createTradeState, normalizeTradeState, type TradeState } from './trade';
 
 export type OrganizationKind = 'player' | 'producer' | 'hospitality' | 'retailer' | 'supplier' | 'holding';
 export type OrganizationStatus = 'active' | 'strained' | 'insolvent' | 'acquired';
@@ -102,6 +104,7 @@ export interface EcosystemState {
   nextTransactionNumber: number;
   nextRetailStockNumber: number;
   nextRetailReportNumber: number;
+  trade: TradeState;
 }
 
 export interface EcosystemAdvanceResult {
@@ -182,10 +185,88 @@ export function createEcosystemState(input: {
       valuation: Math.round(baseCash * 1.8),
       dailyRevenue: 900 + company.momentum * 18,
       dailyCosts: 760 + (index % 5) * 130,
-      assetIds: [],
+      assetIds: [`asset-production-${company.id}`],
       supplierOrganizationIds: [],
       buyerOrganizationIds: [],
       foundedDay: Math.max(1, input.day - 420 - index * 37),
+    };
+  });
+
+  const producerAssets: WorldAssetState[] = input.companies.map((company, index) => {
+    const countryId = countryIdFromLabel(company.country);
+    const regionId = defaultRegionForCountry(countryId);
+    return {
+      id: `asset-production-${company.id}`,
+      type: 'production',
+      name: `${company.name} Production`,
+      city: cityForRegion(regionId),
+      countryId,
+      regionId,
+      address: `Промышленный квартал ${index + 2}`,
+      ownerOrganizationId: `org-${company.id}`,
+      operatorOrganizationId: `org-${company.id}`,
+      status: company.status === 'struggling' ? 'closed' : 'operating',
+      condition: 58 + (index * 7) % 35,
+      capacity: 180 + (index % 5) * 90,
+      footfall: 0,
+      askingPrice: 85_000 + company.reputation * 1_350,
+      dailyRent: 0,
+      dailyOperatingCost: 580 + (index % 4) * 170,
+      audience: company.category,
+      marketOutletId: null,
+      venue: null,
+    };
+  });
+
+  const supplierOrganizations: OrganizationState[] = suppliers.map((supplier, index) => {
+    const countryId = countryIdFromLabel(supplier.country);
+    const regionId = defaultRegionForCountry(countryId);
+    return {
+      id: `org-supplier-${supplier.id}`,
+      name: supplier.name,
+      kind: 'supplier',
+      countryId,
+      regionId,
+      ownerLabel: npcOwner(index + input.companies.length + input.outlets.length),
+      status: 'active',
+      cash: 68_000 + supplier.reliability * 620,
+      debt: 8_000 + (index % 4) * 2_700,
+      reputation: supplier.reliability,
+      strategy: supplier.focus,
+      employeeCount: 12 + (index % 5) * 4,
+      valuation: 110_000 + supplier.reliability * 1_050,
+      dailyRevenue: 0,
+      dailyCosts: 0,
+      assetIds: [`asset-supplier-${supplier.id}`],
+      supplierOrganizationIds: [],
+      buyerOrganizationIds: [],
+      foundedDay: Math.max(1, input.day - 760 - index * 43),
+    };
+  });
+
+  const supplierAssets: WorldAssetState[] = suppliers.map((supplier, index) => {
+    const countryId = countryIdFromLabel(supplier.country);
+    const regionId = defaultRegionForCountry(countryId);
+    return {
+      id: `asset-supplier-${supplier.id}`,
+      type: 'warehouse',
+      name: `${supplier.name} Hub`,
+      city: cityForRegion(regionId),
+      countryId,
+      regionId,
+      address: `Логистическая зона ${index + 1}`,
+      ownerOrganizationId: `org-supplier-${supplier.id}`,
+      operatorOrganizationId: `org-supplier-${supplier.id}`,
+      status: 'operating',
+      condition: 72 + supplier.reliability % 24,
+      capacity: 520 + (index % 4) * 180,
+      footfall: 0,
+      askingPrice: 95_000 + supplier.reliability * 980,
+      dailyRent: 0,
+      dailyOperatingCost: 440 + (index % 4) * 95,
+      audience: supplier.focus,
+      marketOutletId: null,
+      venue: null,
     };
   });
 
@@ -264,10 +345,12 @@ export function createEcosystemState(input: {
     venue: null,
   };
 
+  const organizations = [player, ...companyOrganizations, ...supplierOrganizations, ...outletOrganizations, ...landlordOrganizations];
+  const assets = [playerAsset, ...producerAssets, ...supplierAssets, ...outletAssets, ...vacantAssets];
   return {
     playerOrganizationId,
-    organizations: [player, ...companyOrganizations, ...outletOrganizations, ...landlordOrganizations],
-    assets: [playerAsset, ...outletAssets, ...vacantAssets],
+    organizations,
+    assets,
     holdings: [],
     transactions: [],
     retailReports: [],
@@ -276,6 +359,7 @@ export function createEcosystemState(input: {
     nextTransactionNumber: 1,
     nextRetailStockNumber: 1,
     nextRetailReportNumber: 1,
+    trade: createTradeState(organizations, assets, input.day),
   };
 }
 
@@ -328,6 +412,14 @@ export function migrateRetailIntoEcosystem(ecosystem: EcosystemState, retail: Re
     };
   }
   return next;
+}
+
+
+export function normalizeEcosystemState(state: EcosystemState, day: number): EcosystemState {
+  const trade = state.trade && Array.isArray(state.trade.products)
+    ? normalizeTradeState(state.trade)
+    : createTradeState(state.organizations, state.assets, day);
+  return { ...state, trade };
 }
 
 export function ecosystemPlayerDailyCost(state: EcosystemState): number {
@@ -471,35 +563,38 @@ export function controlledVenueStockLimit(asset: WorldAssetState): number {
 
 export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, batches: BatchState[], day: number, staffBoost: number): EcosystemAdvanceResult {
   const retailAdvance = advanceRetailDay(stateToRetail(state), brand, batches, day, staffBoost);
-  let ecosystem = mergeRetailState(state, retailAdvance.retail);
+  let ecosystem = mergeRetailState({ ...state, trade: normalizeTradeState(state.trade) }, retailAdvance.retail);
   const events: EcosystemAdvanceResult['events'] = [];
   const playerCost = ecosystemPlayerDailyCost(ecosystem);
+  const tradeAdvance = advanceTradeDay(ecosystem.trade, ecosystem.organizations, ecosystem.assets, day);
+  ecosystem = { ...ecosystem, trade: tradeAdvance.trade, organizations: tradeAdvance.organizations };
+  events.push(...tradeAdvance.events);
 
-  let organizations = ecosystem.organizations.map((organization, index) => {
+  let organizations = ecosystem.organizations.map((organization) => {
     if (organization.id === ecosystem.playerOrganizationId) {
       return { ...organization, dailyRevenue: retailAdvance.revenue, dailyCosts: playerCost };
     }
     if (organization.status === 'acquired') return organization;
-    const cycle = ((day * 17 + index * 29 + organization.name.length) % 41) - 20;
-    const statusPenalty = organization.status === 'strained' ? .76 : organization.status === 'insolvent' ? .42 : 1;
-    const revenue = Math.max(0, roundMoney((organization.dailyRevenue + cycle * 9) * statusPenalty));
-    const costs = roundMoney(organization.dailyCosts + Math.abs(cycle) * 4.5 + organization.debt * .00042);
-    const nextCash = roundMoney(organization.cash + revenue - costs);
-    const debt = nextCash < 0 ? roundMoney(organization.debt + Math.abs(nextCash) * .45) : Math.max(0, roundMoney(organization.debt - Math.max(0, revenue - costs) * .07));
-    const cash = Math.max(-8_000, nextCash);
+    const revenue = organization.dailyRevenue;
+    const costs = organization.dailyCosts;
+    const cash = Math.max(-8_000, organization.cash);
+    const operatingProfit = revenue - costs;
+    const debt = cash < 0
+      ? roundMoney(organization.debt + Math.abs(cash) * .38)
+      : Math.max(0, roundMoney(organization.debt - Math.max(0, operatingProfit) * .08));
     const status: OrganizationStatus = debt > organization.valuation * .82 || cash < -3_500
       ? 'insolvent'
       : debt > organization.valuation * .48 || cash < 4_000
         ? 'strained'
         : 'active';
-    return { ...organization, cash, debt, status, reputation: clamp(organization.reputation + (revenue > costs ? .08 : -.12), 10, 98) };
+    return { ...organization, cash, debt, status, reputation: clamp(organization.reputation + (operatingProfit > 0 ? .08 : -.12), 10, 98) };
   });
 
   let assets = ecosystem.assets.map((asset, index) => {
     if (asset.operatorOrganizationId === ecosystem.playerOrganizationId || asset.status === 'vacant') return asset;
     const operator = organizations.find((org) => org.id === asset.operatorOrganizationId);
     let status = asset.status;
-    if (operator?.status === 'insolvent' && asset.type !== 'production') status = 'for_sale';
+    if (operator?.status === 'insolvent') status = 'for_sale';
     const condition = clamp(asset.condition - (asset.status === 'operating' ? .12 + (index % 4) * .04 : .03), 18, 100);
     return { ...asset, status, condition };
   });
@@ -508,7 +603,7 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   let transactions = [...ecosystem.transactions];
   let nextTransactionNumber = ecosystem.nextTransactionNumber;
   for (const org of newlyInsolvent) {
-    const asset = assets.find((item) => item.ownerOrganizationId === org.id && item.type !== 'production');
+    const asset = assets.find((item) => item.ownerOrganizationId === org.id);
     const transaction = createTransaction({ ...ecosystem, nextTransactionNumber }, day, 'bankruptcy', null, org.id, asset?.id ?? null, org.id, 0, `${org.name} не справляется с долгами`, asset ? `${asset.name} выставлена на продажу. Кредиторы требуют ликвидности.` : 'Компания начала процедуру реструктуризации.');
     transactions = [transaction, ...transactions].slice(0, 160);
     nextTransactionNumber += 1;

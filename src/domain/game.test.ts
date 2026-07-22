@@ -72,7 +72,7 @@ describe('startCompany', () => {
   it('создаёт рабочее состояние и списывает стоимость объекта', () => {
     const state = createCompany();
     expect(state.phase).toBe('operating');
-    expect(state.schemaVersion).toBe(10);
+    expect(state.schemaVersion).toBe(11);
     expect(state.finance.cash).toBe(100_000);
     expect(state.finance.dailyFixedCost).toBeGreaterThan(180);
     expect(state.facility?.rooms.production).toBe(1);
@@ -181,10 +181,10 @@ describe('team cycle', () => {
 });
 
 describe('save parsing', () => {
-  it('принимает текущее сохранение schemaVersion 6', () => {
+  it('принимает текущее сохранение schemaVersion 11', () => {
     const state = createCompany();
     const parsed = parseGameState(JSON.stringify(state));
-    expect(parsed.schemaVersion).toBe(10);
+    expect(parsed.schemaVersion).toBe(11);
     expect(parsed.facility).not.toBeNull();
   });
 });
@@ -205,7 +205,7 @@ describe('save migration', () => {
     };
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(10);
+    expect(migrated.schemaVersion).toBe(11);
     expect(migrated.production.batches).toEqual([]);
     expect(migrated.company.completedBatches).toBe(0);
     expect(migrated.supply.inventory).toEqual([]);
@@ -223,10 +223,22 @@ describe('save migration', () => {
     delete world.nextRepeatOrderNumber;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(10);
+    expect(migrated.schemaVersion).toBe(11);
     expect(migrated.world?.repeatOrders).toEqual([]);
     expect(migrated.world?.demandSignals.length).toBeGreaterThan(0);
     expect(migrated.supply.offers.length).toBeGreaterThan(0);
+  });
+
+  it('добавляет товарную экосистему в сохранение schemaVersion 10', () => {
+    const legacy = JSON.parse(JSON.stringify(createCompany())) as Record<string, unknown>;
+    legacy.schemaVersion = 10;
+    const ecosystem = legacy.ecosystem as Record<string, unknown>;
+    delete ecosystem.trade;
+
+    const migrated = migrateGameState(legacy);
+    expect(migrated.schemaVersion).toBe(11);
+    expect(migrated.ecosystem?.trade.products.length).toBeGreaterThan(0);
+    expect(migrated.ecosystem?.trade.contracts.length).toBeGreaterThan(0);
   });
 
   it('добавляет рынок в сохранение schemaVersion 2', () => {
@@ -243,7 +255,7 @@ describe('save migration', () => {
     delete finance.unitsSold;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(10);
+    expect(migrated.schemaVersion).toBe(11);
     expect(migrated.world?.outlets).toHaveLength(12);
     expect(migrated.finance.salesRevenue).toBe(0);
   });
@@ -487,7 +499,7 @@ describe('world ecosystem', () => {
     legacy.retail = opened;
     delete legacy.ecosystem;
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(10);
+    expect(migrated.schemaVersion).toBe(11);
     expect(migrated.ecosystem?.assets.some((asset) => asset.name === 'Legacy Bar' && asset.operatorOrganizationId === migrated.ecosystem?.playerOrganizationId)).toBe(true);
   });
 });

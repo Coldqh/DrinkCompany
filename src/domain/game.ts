@@ -96,6 +96,7 @@ import {
   investInOrganization,
   leaseVacantAsset,
   migrateRetailIntoEcosystem,
+  normalizeEcosystemState,
   setControlledVenueStatus,
   stockControlledVenue,
   upgradeControlledVenue,
@@ -241,7 +242,7 @@ export interface TutorialState {
 }
 
 export interface GameState {
-  schemaVersion: 10;
+  schemaVersion: 11;
   phase: GamePhase;
   mode: GameMode;
   day: number;
@@ -350,7 +351,7 @@ export const STARTING_CASH: Record<GameMode, number> = {
 export function createInitialState(now = new Date()): GameState {
   const timestamp = now.toISOString();
   return {
-    schemaVersion: 10,
+    schemaVersion: 11,
     phase: 'onboarding',
     mode: 'standard',
     day: 1,
@@ -395,7 +396,7 @@ export function startCompany(selection: NewGameSelection, now = new Date()): Gam
     day: 1,
   });
   return {
-    schemaVersion: 10,
+    schemaVersion: 11,
     phase: 'operating',
     mode: selection.mode,
     day: 1,
@@ -1133,7 +1134,7 @@ export function migrateGameState(value: unknown): GameState {
   if (!value || typeof value !== 'object') return createInitialState();
   const raw = value as Record<string, unknown>;
   const version = typeof raw.schemaVersion === 'number' ? raw.schemaVersion : 0;
-  if (version < 1 || version > 10) return createInitialState();
+  if (version < 1 || version > 11) return createInitialState();
 
   const day = typeof raw.day === 'number' ? raw.day : 1;
   const phase: GamePhase = raw.phase === 'operating' ? 'operating' : 'onboarding';
@@ -1170,7 +1171,7 @@ export function migrateGameState(value: unknown): GameState {
   const timestamp = new Date().toISOString();
 
   return normalizeCurrentState({
-    schemaVersion: 10,
+    schemaVersion: 11,
     phase,
     mode,
     day,
@@ -1226,7 +1227,7 @@ function normalizeCurrentState(state: GameState): GameState {
   } : null;
   return {
     ...state,
-    schemaVersion: 10,
+    schemaVersion: 11,
     finance: {
       ...state.finance,
       salesRevenue: state.finance.salesRevenue ?? 0,
@@ -1242,7 +1243,9 @@ function normalizeCurrentState(state: GameState): GameState {
     production,
     brand: state.brand ?? createBrandState(),
     team: state.team ?? createTeamState(state.day),
-    ecosystem: state.ecosystem ?? buildEcosystemForLegacy(state.company, world, properties.find((item) => item.id === world?.propertyId), undefined, state.day),
+    ecosystem: state.ecosystem
+      ? normalizeEcosystemState(state.ecosystem, state.day)
+      : buildEcosystemForLegacy(state.company, world, properties.find((item) => item.id === world?.propertyId), undefined, state.day),
     supply: state.supply ?? createSupplyState(state.day),
     facility: normalizeFacility(state.facility, state, world),
     world,
@@ -1592,8 +1595,12 @@ function syncWorldFromEcosystem(world: WorldState, ecosystem: EcosystemState): W
   const companies = world.companies.map((company) => {
     const organization = ecosystem.organizations.find((item) => item.id === `org-${company.id}`);
     if (!organization) return company;
+    const activeProduct = ecosystem.trade.products
+      .filter((product) => product.producerOrganizationId === organization.id && product.status === 'active')
+      .sort((a, b) => b.totalSold - a.totalSold)[0];
     return {
       ...company,
+      activeRelease: activeProduct?.name ?? company.activeRelease,
       reputation: Math.round(organization.reputation),
       momentum: clamp(Math.round(50 + (organization.dailyRevenue - organization.dailyCosts) / 45), 0, 100),
       status: organization.status === 'active' ? (organization.dailyRevenue > organization.dailyCosts * 1.18 ? 'growing' as const : 'stable' as const) : 'struggling' as const,

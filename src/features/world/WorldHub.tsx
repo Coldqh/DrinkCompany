@@ -11,11 +11,12 @@ import {
   type OrganizationState,
   type WorldAssetState,
 } from '../../domain/ecosystem';
+import { commodityName, inventoryQuantity, productFamilyLabel, type TradeProductState } from '../../domain/trade';
 import type { RetailVenueStatus, RetailVenueType } from '../../domain/retail';
 import { Icon } from '../../ui/Icon';
 import { CompactHeader, EmptyState, MiniStat, Modal, SubTabs } from '../../ui/MobileUI';
 
-type Section = 'city' | 'organizations' | 'control' | 'deals';
+type Section = 'city' | 'organizations' | 'flows' | 'control' | 'deals';
 
 interface WorldHubProps {
   state: GameState;
@@ -33,6 +34,7 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean
   const [assetModal, setAssetModal] = useState<WorldAssetState | null>(null);
   const [organizationModal, setOrganizationModal] = useState<OrganizationState | null>(null);
   const [stockAsset, setStockAsset] = useState<WorldAssetState | null>(null);
+  const [productModal, setProductModal] = useState<TradeProductState | null>(null);
   const [feedback, setFeedback] = useState<ActionResult | null>(null);
   const ecosystem = state.ecosystem;
 
@@ -43,6 +45,10 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean
   const organizations = ecosystem.organizations.filter((organization) => organization.id !== ecosystem.playerOrganizationId);
   const saleAssets = commercialAssets.filter((asset) => asset.status === 'for_sale' || asset.status === 'vacant').length;
   const strainedOrganizations = organizations.filter((organization) => ['strained', 'insolvent'].includes(organization.status)).length;
+  const activeShipments = ecosystem.trade.shipments.filter((shipment) => shipment.status === 'in_transit' || shipment.status === 'delayed').length;
+  const bottlenecks = ecosystem.trade.contracts.filter((contract) => contract.failures > 0).length
+    + ecosystem.trade.batches.filter((batch) => batch.status === 'blocked').length
+    + ecosystem.trade.shelves.filter((listing) => listing.units <= 0).length;
 
   function act(result: ActionResult, close = true) {
     setFeedback(result);
@@ -50,6 +56,7 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean
       setAssetModal(null);
       setOrganizationModal(null);
       setStockAsset(null);
+      setProductModal(null);
     }
     window.setTimeout(() => setFeedback(null), 3200);
   }
@@ -66,14 +73,15 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean
 
       <section className="mini-stat-grid four">
         <MiniStat label="Организаций" value={String(organizations.length)} note={`${strainedOrganizations} под давлением`} />
-        <MiniStat label="Объектов" value={String(ecosystem.assets.length)} note={`${saleAssets} доступны`} />
-        <MiniStat label="Под контролем" value={String(controlledAssets.length)} note="включая производство" />
-        <MiniStat label="Доли" value={`${ecosystem.holdings.reduce((sum, item) => sum + item.share, 0)}%`} note={`${ecosystem.holdings.length} инвестиций`} />
+        <MiniStat label="Продуктов" value={String(ecosystem.trade.products.filter((product) => product.status === 'active').length)} note={`${ecosystem.trade.shelves.length} мест на полках`} />
+        <MiniStat label="В пути" value={String(activeShipments)} note={`${bottlenecks} узких мест`} />
+        <MiniStat label="Под контролем" value={String(controlledAssets.length)} note={`${saleAssets} объектов доступны`} />
       </section>
 
       <SubTabs value={section} onChange={setSection} options={[
         { id: 'city', label: 'Город', badge: saleAssets },
         { id: 'organizations', label: 'Компании', badge: strainedOrganizations },
+        { id: 'flows', label: 'Цепочки', badge: bottlenecks },
         { id: 'control', label: 'Контроль', badge: controlledAssets.length },
         { id: 'deals', label: 'Сделки' },
       ]} />
@@ -124,6 +132,50 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean
         </section>
       )}
 
+      {section === 'flows' && (
+        <section className="trade-flow-stack">
+          <article className="flow-block glass-card">
+            <header><div><span>логистика</span><strong>Товары в пути</strong></div><b>{activeShipments}</b></header>
+            {activeShipments === 0
+              ? <EmptyState icon="contract" title="Нет активных перевозок" text="Следующие отправки появятся по действующим контрактам." />
+              : ecosystem.trade.shipments
+                  .filter((shipment) => shipment.status === 'in_transit' || shipment.status === 'delayed')
+                  .sort((a, b) => a.arrivalDay - b.arrivalDay)
+                  .slice(0, 8)
+                  .map((shipment) => {
+                    const seller = ecosystem.organizations.find((organization) => organization.id === shipment.sellerOrganizationId);
+                    const buyer = ecosystem.organizations.find((organization) => organization.id === shipment.buyerOrganizationId);
+                    return <div key={shipment.id} className="flow-row"><i className={shipment.status === 'delayed' ? 'bad' : ''} /><span><strong>{commodityName(ecosystem.trade, shipment.commodityKind, shipment.commodityId)}</strong><small>{seller?.name} → {buyer?.name} · прибытие день {shipment.arrivalDay}</small></span><b>{shipment.quantity}</b></div>;
+                  })}
+          </article>
+
+          <article className="flow-block glass-card">
+            <header><div><span>производство</span><strong>Продуктовые линии</strong></div><b>{ecosystem.trade.products.filter((product) => product.status === 'active').length}</b></header>
+            {ecosystem.trade.products
+              .filter((product) => product.status !== 'discontinued')
+              .sort((a, b) => b.totalSold - a.totalSold)
+              .slice(0, 10)
+              .map((product) => {
+                const producer = ecosystem.organizations.find((organization) => organization.id === product.producerOrganizationId);
+                const stock = inventoryQuantity(ecosystem.trade, product.producerOrganizationId, 'product', product.id);
+                const shelves = ecosystem.trade.shelves.filter((listing) => listing.productId === product.id);
+                return <button key={product.id} className="product-flow-row" onClick={() => setProductModal(product)}><span className="product-flow-mark"><Icon name={product.family === 'cider' ? 'apple' : 'bottle'} /></span><span><small>{producer?.name} · {productFamilyLabel(product.family)}</small><strong>{product.name}</strong><em>{shelves.length} полок · склад {Math.round(stock)} · продано {product.totalSold}</em></span><b>{product.quality}</b></button>;
+              })}
+          </article>
+
+          <article className="flow-block glass-card">
+            <header><div><span>риски</span><strong>Узкие места</strong></div><b>{bottlenecks}</b></header>
+            {bottlenecks === 0
+              ? <EmptyState icon="market" title="Цепочки стабильны" text="Производство, поставки и полки сейчас не имеют критических разрывов." />
+              : <>
+                  {ecosystem.trade.batches.filter((batch) => batch.status === 'blocked').slice(0, 5).map((batch) => { const product = ecosystem.trade.products.find((item) => item.id === batch.productId); const producer = ecosystem.organizations.find((item) => item.id === batch.producerOrganizationId); return <div key={batch.id} className="flow-row warning"><i className="bad" /><span><strong>{producer?.name}: партия остановлена</strong><small>{product?.name} · {batch.issue}</small></span></div>; })}
+                  {ecosystem.trade.contracts.filter((contract) => contract.failures > 0).slice(0, 5).map((contract) => { const seller = ecosystem.organizations.find((item) => item.id === contract.sellerOrganizationId); const buyer = ecosystem.organizations.find((item) => item.id === contract.buyerOrganizationId); return <div key={contract.id} className="flow-row warning"><i className="bad" /><span><strong>{commodityName(ecosystem.trade, contract.commodityKind, contract.commodityId)}</strong><small>{seller?.name} → {buyer?.name} · {contract.lastResult}</small></span><b>{contract.failures}</b></div>; })}
+                  {ecosystem.trade.shelves.filter((listing) => listing.units <= 0).slice(0, 5).map((listing) => { const asset = ecosystem.assets.find((item) => item.id === listing.assetId); const product = ecosystem.trade.products.find((item) => item.id === listing.productId); return <div key={listing.id} className="flow-row warning"><i className="bad" /><span><strong>Пустая полка: {product?.name}</strong><small>{asset?.name} · {listing.stockoutDays} дн. без товара</small></span></div>; })}
+                </>}
+          </article>
+        </section>
+      )}
+
       {section === 'control' && (
         controlledAssets.length === 0
           ? <section className="glass-card"><EmptyState icon="store" title="Нет объектов под контролем" text="Выкупи действующую точку или арендуй свободное помещение в городе." /></section>
@@ -171,6 +223,7 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean
         <AssetModal
           asset={assetModal}
           owner={ecosystem.organizations.find((organization) => organization.id === assetModal.ownerOrganizationId)}
+          ecosystem={ecosystem}
           cash={state.finance.cash}
           controlled={isPlayerControlledAsset(ecosystem, assetModal)}
           onClose={() => setAssetModal(null)}
@@ -182,18 +235,20 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean
         <OrganizationModal
           organization={organizationModal}
           assets={ecosystem.assets.filter((asset) => organizationModal.assetIds.includes(asset.id))}
+          ecosystem={ecosystem}
           currentShare={ecosystem.holdings.filter((holding) => holding.organizationId === organizationModal.id).reduce((sum, holding) => sum + holding.share, 0)}
           cash={state.finance.cash}
           onClose={() => setOrganizationModal(null)}
           onInvest={(share) => act(onInvest(organizationModal.id, share))}
         />
       )}
+      {productModal && <ProductModal product={productModal} ecosystem={ecosystem} onClose={() => setProductModal(null)} />}
       {stockAsset && <StockModal state={state} asset={stockAsset} onClose={() => setStockAsset(null)} onSubmit={(releaseId, units, price) => act(onStock(stockAsset.id, releaseId, units, price))} />}
     </div>
   );
 }
 
-function AssetModal({ asset, owner, cash, controlled, onClose, onAcquire, onLease }: { asset: WorldAssetState; owner?: OrganizationState; cash: number; controlled: boolean; onClose: () => void; onAcquire: () => void; onLease: (type: RetailVenueType, name: string) => void }) {
+function AssetModal({ asset, owner, ecosystem, cash, controlled, onClose, onAcquire, onLease }: { asset: WorldAssetState; owner?: OrganizationState; ecosystem: NonNullable<GameState['ecosystem']>; cash: number; controlled: boolean; onClose: () => void; onAcquire: () => void; onLease: (type: RetailVenueType, name: string) => void }) {
   const [type, setType] = useState<RetailVenueType>('bar');
   const [name, setName] = useState(asset.name);
   const acquisitionEstimate = asset.askingPrice * (owner?.status === 'insolvent' ? .68 : owner?.status === 'strained' ? .84 : asset.status === 'operating' ? 1.18 : 1);
@@ -207,12 +262,13 @@ function AssetModal({ asset, owner, cash, controlled, onClose, onAcquire, onLeas
     }>
       <div className="asset-identity"><span className="ecosystem-glyph large"><Icon name={asset.type === 'bar' ? 'beer' : asset.type === 'shop' ? 'store' : 'map'} /></span><div><strong>{asset.address}</strong><small>{asset.audience}</small></div></div>
       <div className="detail-grid"><Detail label="Владелец" value={owner?.name ?? 'Частный собственник'} /><Detail label="Статус владельца" value={owner ? statusLabel(owner.status) : 'частный'} /><Detail label="Состояние" value={`${Math.round(asset.condition)}/100`} /><Detail label="Поток" value={`${asset.footfall}/100`} /><Detail label="Аренда" value={`${formatMoney(asset.dailyRent)}/д`} /><Detail label="Оценка" value={formatMoney(asset.askingPrice)} /></div>
+      {(asset.type === 'bar' || asset.type === 'shop') && <div className="organization-assets"><span>Товарный оборот</span>{ecosystem.trade.shelves.filter((listing) => listing.assetId === asset.id).length === 0 ? <small>На полках нет товаров экосистемы.</small> : ecosystem.trade.shelves.filter((listing) => listing.assetId === asset.id).map((listing) => { const product = ecosystem.trade.products.find((item) => item.id === listing.productId); return <div key={listing.id}><strong>{product?.name ?? 'Неизвестный продукт'}</strong><small>{listing.units} на полке · сегодня {listing.unitsSoldToday} · всего {listing.totalUnitsSold}</small></div>; })}{ecosystem.trade.shipments.filter((shipment) => shipment.buyerAssetId === asset.id && (shipment.status === 'in_transit' || shipment.status === 'delayed')).map((shipment) => <div key={shipment.id}><strong>В пути: {commodityName(ecosystem.trade, shipment.commodityKind, shipment.commodityId)}</strong><small>{shipment.quantity} ед. · прибытие день {shipment.arrivalDay}</small></div>)}</div>}
       {asset.status === 'vacant' && <div className="lease-builder"><span>Что открыть</span><div className="choice-pills"><button className={type === 'bar' ? 'active' : ''} onClick={() => setType('bar')}>Бар</button><button className={type === 'shop' ? 'active' : ''} onClick={() => setType('shop')}>Магазин</button></div><label className="field"><span>Название оператора</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={36} /></label><small>Ты арендуешь конкретное помещение. Собственник, депозит и ежедневная аренда остаются частью мира.</small></div>}
     </Modal>
   );
 }
 
-function OrganizationModal({ organization, assets, currentShare, cash, onClose, onInvest }: { organization: OrganizationState; assets: WorldAssetState[]; currentShare: number; cash: number; onClose: () => void; onInvest: (share: number) => void }) {
+function OrganizationModal({ organization, assets, ecosystem, currentShare, cash, onClose, onInvest }: { organization: OrganizationState; assets: WorldAssetState[]; ecosystem: NonNullable<GameState['ecosystem']>; currentShare: number; cash: number; onClose: () => void; onInvest: (share: number) => void }) {
   const [share, setShare] = useState(10);
   const discount = organization.status === 'insolvent' ? .52 : organization.status === 'strained' ? .76 : 1;
   const cost = organization.valuation * (share / 100) * discount;
@@ -220,9 +276,23 @@ function OrganizationModal({ organization, assets, currentShare, cash, onClose, 
     <Modal title={organization.name} kicker={`${organizationKindLabel(organization.kind)} · ${statusLabel(organization.status)}`} onClose={onClose} footer={<button className="button primary" disabled={cash < cost || currentShare + share > 49} onClick={() => onInvest(share)}>Купить {share}% · {formatMoney(cost)}</button>}>
       <div className="detail-grid"><Detail label="Владелец" value={organization.ownerLabel} /><Detail label="Оценка" value={formatMoney(organization.valuation)} /><Detail label="Деньги" value={formatMoney(organization.cash)} /><Detail label="Долг" value={formatMoney(organization.debt)} /><Detail label="Выручка/д" value={formatMoney(organization.dailyRevenue)} /><Detail label="Расход/д" value={formatMoney(organization.dailyCosts)} /></div>
       <div className="organization-assets"><span>Объекты</span>{assets.length === 0 ? <small>Собственной недвижимости нет.</small> : assets.map((asset) => <div key={asset.id}><strong>{asset.name}</strong><small>{assetTypeLabel(asset.type)} · {asset.city} · {asset.status === 'for_sale' ? 'продаётся' : 'работает'}</small></div>)}</div>
+      <div className="organization-assets"><span>Цепочка операций</span>{ecosystem.trade.products.filter((product) => product.producerOrganizationId === organization.id).map((product) => <div key={product.id}><strong>{product.name}</strong><small>{productFamilyLabel(product.family)} · склад {Math.round(inventoryQuantity(ecosystem.trade, organization.id, 'product', product.id))} · продано {product.totalSold}</small></div>)}{ecosystem.trade.contracts.filter((contract) => contract.buyerOrganizationId === organization.id || contract.sellerOrganizationId === organization.id).slice(0, 6).map((contract) => { const counterpartyId = contract.sellerOrganizationId === organization.id ? contract.buyerOrganizationId : contract.sellerOrganizationId; const counterparty = ecosystem.organizations.find((item) => item.id === counterpartyId); return <div key={contract.id}><strong>{contract.sellerOrganizationId === organization.id ? 'Поставляет' : 'Покупает'}: {commodityName(ecosystem.trade, contract.commodityKind, contract.commodityId)}</strong><small>{counterparty?.name} · каждые {contract.intervalDays} дн. · {contract.lastResult}</small></div>; })}{ecosystem.trade.batches.filter((batch) => batch.producerOrganizationId === organization.id && batch.status !== 'ready').slice(0, 3).map((batch) => { const product = ecosystem.trade.products.find((item) => item.id === batch.productId); return <div key={batch.id}><strong>{batch.status === 'blocked' ? 'Остановка' : 'В производстве'}: {product?.name}</strong><small>{batch.issue ?? `готовность день ${batch.readyDay}`}</small></div>; })}</div>
       <div className="investment-control"><span>Твоя доля сейчас: {currentShare}%</span><div className="choice-pills">{[10, 25, 40].map((value) => <button key={value} className={share === value ? 'active' : ''} disabled={currentShare + value > 49} onClick={() => setShare(value)}>{value}%</button>)}</div><small>Доля даёт часть прибыли, но не управление активами. Операционный контроль появляется только после выкупа объекта.</small></div>
     </Modal>
   );
+}
+
+function ProductModal({ product, ecosystem, onClose }: { product: TradeProductState; ecosystem: NonNullable<GameState['ecosystem']>; onClose: () => void }) {
+  const producer = ecosystem.organizations.find((organization) => organization.id === product.producerOrganizationId);
+  const stock = inventoryQuantity(ecosystem.trade, product.producerOrganizationId, 'product', product.id);
+  const batches = ecosystem.trade.batches.filter((batch) => batch.productId === product.id).slice(-4).reverse();
+  const shelves = ecosystem.trade.shelves.filter((listing) => listing.productId === product.id);
+  const contracts = ecosystem.trade.contracts.filter((contract) => contract.commodityKind === 'product' && contract.commodityId === product.id);
+  return <Modal title={product.name} kicker={`${producer?.name ?? 'Производитель'} · ${productFamilyLabel(product.family)}`} onClose={onClose}>
+    <div className="detail-grid"><Detail label="Качество" value={`${product.quality}/100`} /><Detail label="Склад" value={`${Math.round(stock)} бут.`} /><Detail label="Опт" value={formatMoney(product.wholesalePrice)} /><Detail label="Розница" value={formatMoney(product.recommendedRetailPrice)} /><Detail label="Произведено" value={String(product.totalProduced)} /><Detail label="Продано" value={String(product.totalSold)} /></div>
+    <div className="organization-assets"><span>Где продаётся</span>{shelves.length === 0 ? <small>Продукт ещё не попал на полки.</small> : shelves.map((listing) => { const asset = ecosystem.assets.find((item) => item.id === listing.assetId); return <div key={listing.id}><strong>{asset?.name ?? listing.assetId}</strong><small>{listing.units} осталось · сегодня {listing.unitsSoldToday} · цена {formatMoney(listing.retailPrice)}</small></div>; })}</div>
+    <div className="organization-assets"><span>Контракты и партии</span>{contracts.map((contract) => { const buyer = ecosystem.organizations.find((item) => item.id === contract.buyerOrganizationId); return <div key={contract.id}><strong>{buyer?.name}</strong><small>{contract.quantity} ед. каждые {contract.intervalDays} дн. · {contract.lastResult}</small></div>; })}{batches.map((batch) => <div key={batch.id}><strong>{batch.status === 'ready' ? 'Готовая партия' : batch.status === 'blocked' ? 'Заблокирована' : 'В производстве'}</strong><small>{batch.producedUnits || batch.plannedUnits} ед. · {batch.issue ?? `день готовности ${batch.readyDay}`}</small></div>)}</div>
+  </Modal>;
 }
 
 function StockModal({ state, asset, onClose, onSubmit }: { state: GameState; asset: WorldAssetState; onClose: () => void; onSubmit: (releaseId: string, units: number, price: number) => void }) {
