@@ -1534,3 +1534,30 @@ body { background:radial-gradient(circle at 55% -12%,rgba(111,24,47,.16),transpa
 @media (max-width:430px) {
   .organization-assets>div:has(select) { grid-template-columns:1fr; }
 }
+
+/* World intelligence */
+.organization-intelligence {
+  display: grid;
+  gap: .5rem;
+  padding: .85rem;
+  border: 1px solid rgba(121, 24, 48, .32);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(83, 18, 35, .18), rgba(255,255,255,.018));
+}
+.organization-intelligence > span {
+  color: #8f8589;
+  font-size: .58rem;
+  font-weight: 850;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.organization-intelligence > strong { color: #eee9ea; font-size: .92rem; }
+.organization-intelligence > small { color: #a69da0; font-size: .66rem; line-height: 1.45; }
+.organization-intelligence .detail-grid { margin-top: .25rem; }
+.chronicle-list article b {
+  color: #9c858c;
+  font-size: .54rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}

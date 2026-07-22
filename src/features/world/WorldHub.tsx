@@ -15,11 +15,12 @@ import {
   type WorldAssetState,
 } from '../../domain/ecosystem';
 import { commodityName, inventoryQuantity, productFamilyLabel, type TradeProductState } from '../../domain/trade';
+import { leaderRoleLabel, strategyLabel } from '../../domain/worldIntelligence';
 import type { RetailVenueStatus, RetailVenueType } from '../../domain/retail';
 import { Icon } from '../../ui/Icon';
 import { CompactHeader, EmptyState, MiniStat, Modal, SubTabs } from '../../ui/MobileUI';
 
-type Section = 'city' | 'organizations' | 'flows' | 'group' | 'control' | 'deals';
+type Section = 'city' | 'organizations' | 'flows' | 'group' | 'control' | 'chronicle' | 'deals';
 
 interface WorldHubProps {
   state: GameState;
@@ -54,6 +55,7 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
   const saleAssets = commercialAssets.filter((asset) => asset.status === 'for_sale' || asset.status === 'vacant').length;
   const strainedOrganizations = organizations.filter((organization) => ['strained', 'insolvent'].includes(organization.status)).length;
   const activeShipments = ecosystem.trade.shipments.filter((shipment) => shipment.status === 'in_transit' || shipment.status === 'delayed').length;
+  const strategicChanges = ecosystem.intelligence.chronicle.filter((entry) => entry.day >= state.day - 7).length;
   const bottlenecks = ecosystem.trade.contracts.filter((contract) => contract.failures > 0).length
     + ecosystem.trade.batches.filter((batch) => batch.status === 'blocked').length
     + ecosystem.trade.shelves.filter((listing) => listing.units <= 0).length;
@@ -92,6 +94,7 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
         { id: 'flows', label: 'Цепочки', badge: bottlenecks },
         { id: 'group', label: 'Группа', badge: subsidiaries.length },
         { id: 'control', label: 'Контроль', badge: controlledAssets.length },
+        { id: 'chronicle', label: 'Хроника', badge: strategicChanges },
         { id: 'deals', label: 'Сделки' },
       ]} />
 
@@ -132,7 +135,7 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
                   <span className="ecosystem-copy">
                     <small>{organizationKindLabel(organization.kind)} · {organization.ownerLabel}</small>
                     <strong>{organization.name}</strong>
-                    <em>{organization.strategy}</em>
+                    <em>{ecosystem.intelligence.minds.find((mind) => mind.organizationId === organization.id)?.objective ?? organization.strategy}</em>
                   </span>
                   <span className="ecosystem-value"><b>{formatMoney(organization.valuation)}</b><small>{share > 0 ? `твоя доля ${share}%` : statusLabel(organization.status)}</small></span>
                 </button>
@@ -225,6 +228,20 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
                       <button className="button ghost" onClick={() => act(onStatus(asset.id, asset.venue?.status === 'open' ? 'closed' : 'open'), false)}>{asset.venue.status === 'open' ? 'Закрыть' : 'Открыть'}</button>
                     </div>
                   )}
+                </article>
+              ))}
+            </section>
+      )}
+
+      {section === 'chronicle' && (
+        ecosystem.intelligence.chronicle.length === 0
+          ? <section className="glass-card"><EmptyState icon="archive" title="История ещё не началась" text="Стратегические решения, смены руководителей, провалы и новые продукты появятся здесь." /></section>
+          : <section className="transaction-list glass-card chronicle-list">
+              {ecosystem.intelligence.chronicle.slice(0, 80).map((entry) => (
+                <article key={entry.id}>
+                  <i className={entry.tone === 'warning' ? 'bad' : entry.tone === 'release' ? 'good' : 'neutral'} />
+                  <span><strong>{entry.headline}</strong><small>День {entry.day} · {entry.detail}</small></span>
+                  <b>{entry.kind === 'leadership' ? 'люди' : entry.kind === 'product' ? 'продукт' : entry.kind === 'finance' ? 'финансы' : 'курс'}</b>
                 </article>
               ))}
             </section>
@@ -327,6 +344,18 @@ function OrganizationModal({ organization, assets, ecosystem, currentShare, cash
   return (
     <Modal title={organization.name} kicker={`${organizationKindLabel(organization.kind)} · ${statusLabel(organization.status)}`} onClose={onClose}>
       <div className="detail-grid"><Detail label="Владелец" value={organization.ownerLabel} /><Detail label="Оценка" value={formatMoney(organization.valuation)} /><Detail label="Деньги" value={formatMoney(organization.cash)} /><Detail label="Долг" value={formatMoney(organization.debt)} /><Detail label="Выручка/д" value={formatMoney(organization.dailyRevenue)} /><Detail label="Расход/д" value={formatMoney(organization.dailyCosts)} /></div>
+      {(() => {
+        const mind = ecosystem.intelligence.minds.find((item) => item.organizationId === organization.id);
+        const leaders = ecosystem.intelligence.leaders.filter((leader) => leader.organizationId === organization.id && leader.active).sort((a, b) => b.influence - a.influence);
+        const memories = ecosystem.intelligence.memories.filter((memory) => memory.organizationId === organization.id).slice(0, 5);
+        const relations = ecosystem.intelligence.relations.filter((relation) => relation.organizationAId === organization.id || relation.organizationBId === organization.id).sort((a, b) => b.dependency - a.dependency).slice(0, 5);
+        return <>
+          {mind && <div className="organization-intelligence"><span>Текущий курс</span><strong>{strategyLabel(mind.strategy)}</strong><small>{mind.objective}</small><div className="detail-grid compact"><Detail label="Уверенность" value={`${Math.round(mind.confidence)}/100`} /><Detail label="Давление" value={`${Math.round(mind.pressure)}/100`} /></div></div>}
+          <div className="organization-assets"><span>Руководство</span>{leaders.map((leader) => <div key={leader.id}><strong>{leader.name}</strong><small>{leaderRoleLabel(leader.role)} · влияние {leader.influence} · риск {leader.riskTolerance} · лояльность {leader.loyalty}</small></div>)}</div>
+          {relations.length > 0 && <div className="organization-assets"><span>Связи</span>{relations.map((relation) => { const otherId = relation.organizationAId === organization.id ? relation.organizationBId : relation.organizationAId; const other = ecosystem.organizations.find((item) => item.id === otherId); return <div key={relation.id}><strong>{other?.name ?? 'Неизвестная организация'}</strong><small>доверие {Math.round(relation.trust)} · зависимость {Math.round(relation.dependency)} · соперничество {Math.round(relation.rivalry)} · {relation.reason}</small></div>; })}</div>}
+          {memories.length > 0 && <div className="organization-assets"><span>Память компании</span>{memories.map((memory) => <div key={memory.id}><strong>День {memory.day}</strong><small>{memory.summary}</small></div>)}</div>}
+        </>;
+      })()}
       <div className="organization-assets"><span>Объекты</span>{assets.length === 0 ? <small>Собственной недвижимости нет.</small> : assets.map((asset) => <div key={asset.id}><strong>{asset.name}</strong><small>{assetTypeLabel(asset.type)} · {asset.city} · {asset.status === 'for_sale' ? 'продаётся' : 'работает'}</small></div>)}</div>
       <div className="organization-assets"><span>Цепочка операций</span>{ecosystem.trade.products.filter((product) => product.producerOrganizationId === organization.id).map((product) => <div key={product.id}><strong>{product.name}</strong><small>{productFamilyLabel(product.family)} · склад {Math.round(inventoryQuantity(ecosystem.trade, organization.id, 'product', product.id))} · продано {product.totalSold}</small></div>)}{ecosystem.trade.contracts.filter((contract) => contract.buyerOrganizationId === organization.id || contract.sellerOrganizationId === organization.id).slice(0, 6).map((contract) => { const counterpartyId = contract.sellerOrganizationId === organization.id ? contract.buyerOrganizationId : contract.sellerOrganizationId; const counterparty = ecosystem.organizations.find((item) => item.id === counterpartyId); return <div key={contract.id}><strong>{contract.sellerOrganizationId === organization.id ? 'Поставляет' : 'Покупает'}: {commodityName(ecosystem.trade, contract.commodityKind, contract.commodityId)}</strong><small>{counterparty?.name} · каждые {contract.intervalDays} дн. · {contract.lastResult}</small></div>; })}</div>
 

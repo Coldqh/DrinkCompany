@@ -249,7 +249,7 @@ export interface TutorialState {
 }
 
 export interface GameState {
-  schemaVersion: 12;
+  schemaVersion: 13;
   phase: GamePhase;
   mode: GameMode;
   day: number;
@@ -358,7 +358,7 @@ export const STARTING_CASH: Record<GameMode, number> = {
 export function createInitialState(now = new Date()): GameState {
   const timestamp = now.toISOString();
   return {
-    schemaVersion: 12,
+    schemaVersion: 13,
     phase: 'onboarding',
     mode: 'standard',
     day: 1,
@@ -403,7 +403,7 @@ export function startCompany(selection: NewGameSelection, now = new Date()): Gam
     day: 1,
   });
   return {
-    schemaVersion: 12,
+    schemaVersion: 13,
     phase: 'operating',
     mode: selection.mode,
     day: 1,
@@ -1180,7 +1180,7 @@ export function migrateGameState(value: unknown): GameState {
   if (!value || typeof value !== 'object') return createInitialState();
   const raw = value as Record<string, unknown>;
   const version = typeof raw.schemaVersion === 'number' ? raw.schemaVersion : 0;
-  if (version < 1 || version > 12) return createInitialState();
+  if (version < 1 || version > 13) return createInitialState();
 
   const day = typeof raw.day === 'number' ? raw.day : 1;
   const phase: GamePhase = raw.phase === 'operating' ? 'operating' : 'onboarding';
@@ -1217,7 +1217,7 @@ export function migrateGameState(value: unknown): GameState {
   const timestamp = new Date().toISOString();
 
   return normalizeCurrentState({
-    schemaVersion: 12,
+    schemaVersion: 13,
     phase,
     mode,
     day,
@@ -1273,7 +1273,7 @@ function normalizeCurrentState(state: GameState): GameState {
   } : null;
   return {
     ...state,
-    schemaVersion: 12,
+    schemaVersion: 13,
     finance: {
       ...state.finance,
       salesRevenue: state.finance.salesRevenue ?? 0,

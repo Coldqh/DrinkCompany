@@ -20,6 +20,12 @@ import {
 import type { MarketOutletState } from './market';
 import { suppliers } from '../data/supplyCatalog';
 import { advanceTradeDay, createTradeState, normalizeTradeState, type TradeState } from './trade';
+import {
+  advanceWorldIntelligence,
+  createWorldIntelligenceState,
+  normalizeWorldIntelligenceState,
+  type WorldIntelligenceState,
+} from './worldIntelligence';
 
 export type OrganizationKind = 'player' | 'producer' | 'hospitality' | 'retailer' | 'supplier' | 'holding';
 export type OrganizationStatus = 'active' | 'strained' | 'insolvent' | 'acquired';
@@ -117,6 +123,7 @@ export interface EcosystemState {
   nextRetailStockNumber: number;
   nextRetailReportNumber: number;
   trade: TradeState;
+  intelligence: WorldIntelligenceState;
 }
 
 export interface EcosystemAdvanceResult {
@@ -373,6 +380,7 @@ export function createEcosystemState(input: {
     nextRetailStockNumber: 1,
     nextRetailReportNumber: 1,
     trade: createTradeState(organizations, assets, input.day),
+    intelligence: createWorldIntelligenceState(organizations, input.day),
   };
 }
 
@@ -432,7 +440,7 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
   const trade = state.trade && Array.isArray(state.trade.products)
     ? normalizeTradeState(state.trade)
     : createTradeState(state.organizations, state.assets, day);
-  return { ...state, subsidiaries: state.subsidiaries ?? [], trade };
+  return { ...state, subsidiaries: state.subsidiaries ?? [], trade, intelligence: normalizeWorldIntelligenceState(state.intelligence, state.organizations, day) };
 }
 
 export function ecosystemPlayerDailyCost(state: EcosystemState): number {
@@ -764,6 +772,9 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   if (dividend >= 1) events.push({ tone: 'market', title: 'Группа получила дивиденды', detail: `Контролируемые и миноритарные доли перечислили ${roundMoney(dividend)}.` });
 
   ecosystem = { ...ecosystem, organizations, assets, transactions, nextTransactionNumber };
+  const intelligenceAdvance = advanceWorldIntelligence(ecosystem, day);
+  ecosystem = intelligenceAdvance.ecosystem;
+  events.push(...intelligenceAdvance.events);
   return {
     ecosystem,
     playerRevenue: roundMoney(retailAdvance.revenue + dividend),
