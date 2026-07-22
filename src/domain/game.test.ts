@@ -72,7 +72,7 @@ describe('startCompany', () => {
   it('создаёт рабочее состояние и списывает стоимость объекта', () => {
     const state = createCompany();
     expect(state.phase).toBe('operating');
-    expect(state.schemaVersion).toBe(16);
+    expect(state.schemaVersion).toBe(17);
     expect(state.finance.cash).toBe(100_000);
     expect(state.finance.dailyFixedCost).toBeGreaterThan(180);
     expect(state.facility?.rooms.production).toBe(1);
@@ -83,6 +83,8 @@ describe('startCompany', () => {
     expect(state.team.candidates.length).toBeGreaterThan(0);
     expect(state.ecosystem?.regulation.authorities).toHaveLength(3);
     expect(state.ecosystem?.regulation.licenses.length ?? 0).toBeGreaterThan(0);
+    expect(state.ecosystem?.primaryProduction.sites.length ?? 0).toBeGreaterThan(8);
+    expect(state.ecosystem?.primaryProduction.rawLots.length ?? 0).toBeGreaterThan(0);
   });
 
   it('отклоняет слишком короткое название', () => {
@@ -183,15 +185,26 @@ describe('team cycle', () => {
 });
 
 describe('save parsing', () => {
-  it('принимает текущее сохранение schemaVersion 16', () => {
+  it('принимает текущее сохранение schemaVersion 17', () => {
     const state = createCompany();
     const parsed = parseGameState(JSON.stringify(state));
-    expect(parsed.schemaVersion).toBe(16);
+    expect(parsed.schemaVersion).toBe(17);
     expect(parsed.facility).not.toBeNull();
   });
 });
 
 describe('save migration', () => {
+  it('добавляет первичный сектор в сохранение schemaVersion 16', () => {
+    const legacy = structuredClone(createCompany()) as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 16;
+    const ecosystem = legacy.ecosystem as Record<string, unknown>;
+    delete ecosystem.primaryProduction;
+    const migrated = migrateGameState(legacy);
+    expect(migrated.schemaVersion).toBe(17);
+    expect(migrated.ecosystem?.primaryProduction.sites.length ?? 0).toBeGreaterThan(8);
+    expect(migrated.ecosystem?.assets.some((asset) => asset.type === 'orchard')).toBe(true);
+  });
+
   it('добавляет регулирование и параметры алкоголя в сохранение schemaVersion 15', () => {
     const legacy = JSON.parse(JSON.stringify(createCompany())) as Record<string, unknown>;
     legacy.schemaVersion = 15;
@@ -203,7 +216,7 @@ describe('save migration', () => {
       delete product.packageVolumeLiters;
     }
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(16);
+    expect(migrated.schemaVersion).toBe(17);
     expect(migrated.ecosystem?.regulation.authorities).toHaveLength(3);
     expect(migrated.ecosystem?.regulation.licenses.length ?? 0).toBeGreaterThan(0);
     expect(migrated.ecosystem?.trade.products.every((product) => product.alcoholByVolume >= 0)).toBe(true);
@@ -215,7 +228,7 @@ describe('save migration', () => {
     const ecosystem = legacy.ecosystem as Record<string, unknown>;
     delete ecosystem.intelligence;
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(16);
+    expect(migrated.schemaVersion).toBe(17);
     expect((migrated.ecosystem?.intelligence.leaders.length ?? 0)).toBeGreaterThan(0);
     expect(migrated.ecosystem?.intelligence.minds).toHaveLength(migrated.ecosystem?.organizations.length ?? 0);
   });
@@ -226,7 +239,7 @@ describe('save migration', () => {
     const ecosystem = legacy.ecosystem as Record<string, unknown>;
     delete ecosystem.subsidiaries;
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(16);
+    expect(migrated.schemaVersion).toBe(17);
     expect(migrated.ecosystem?.subsidiaries).toEqual([]);
     expect(migrated.finance.corporateSpend).toBe(0);
   });
@@ -246,7 +259,7 @@ describe('save migration', () => {
     };
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(16);
+    expect(migrated.schemaVersion).toBe(17);
     expect(migrated.production.batches).toEqual([]);
     expect(migrated.company.completedBatches).toBe(0);
     expect(migrated.supply.inventory).toEqual([]);
@@ -264,7 +277,7 @@ describe('save migration', () => {
     delete world.nextRepeatOrderNumber;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(16);
+    expect(migrated.schemaVersion).toBe(17);
     expect(migrated.world?.repeatOrders).toEqual([]);
     expect(migrated.world?.demandSignals.length).toBeGreaterThan(0);
     expect(migrated.supply.offers.length).toBeGreaterThan(0);
@@ -277,7 +290,7 @@ describe('save migration', () => {
     delete ecosystem.trade;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(16);
+    expect(migrated.schemaVersion).toBe(17);
     expect(migrated.ecosystem?.trade.products.length).toBeGreaterThan(0);
     expect(migrated.ecosystem?.trade.contracts.length).toBeGreaterThan(0);
   });
@@ -296,7 +309,7 @@ describe('save migration', () => {
     delete finance.unitsSold;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(16);
+    expect(migrated.schemaVersion).toBe(17);
     expect(migrated.world?.outlets).toHaveLength(12);
     expect(migrated.finance.salesRevenue).toBe(0);
   });
@@ -540,7 +553,7 @@ describe('world ecosystem', () => {
     legacy.retail = opened;
     delete legacy.ecosystem;
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(16);
+    expect(migrated.schemaVersion).toBe(17);
     expect(migrated.ecosystem?.assets.some((asset) => asset.name === 'Legacy Bar' && asset.operatorOrganizationId === migrated.ecosystem?.playerOrganizationId)).toBe(true);
   });
 });

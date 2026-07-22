@@ -501,10 +501,12 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
     record('production', producer.id, null, null, `Запущена партия ${product.name}`, `${plannedUnits} бутылок будут готовы на ${day + productionDays(product.family)}-й день.`, batchCost);
   }
 
-  // 5. Поставщики пополняют реальные лоты сырья.
+  // 5. Промышленная упаковка пока пополняется отдельным сектором.
+  // Солод, хмель, яблоки, сахар и дрожжи больше не создаются здесь:
+  // их производит первичный сектор и перерабатывающие предприятия.
   for (const supplier of nextOrganizations.filter((organization) => organization.kind === 'supplier' && organization.status !== 'acquired')) {
-    for (const lot of trade.inventory.filter((item) => item.organizationId === supplier.id && item.commodityKind === 'ingredient')) {
-      const target = 250 + hash(`${supplier.id}-${lot.commodityId}`) % 300;
+    for (const lot of trade.inventory.filter((item) => item.organizationId === supplier.id && item.commodityKind === 'ingredient' && item.commodityId === 'bottles')) {
+      const target = 480 + hash(`${supplier.id}-${lot.commodityId}`) % 420;
       if (lot.quantity < target * .35) lot.quantity = roundQuantity(lot.quantity + target * .6);
     }
   }

@@ -19,6 +19,10 @@ export interface ObserverSimulationReport {
   exciseObligations: number;
   regulatoryPayments: number;
   openRegulatoryViolations: number;
+  primarySiteCount: number;
+  primaryRawLotCount: number;
+  harvestCount: number;
+  primaryProcessingOperations: number;
   finalPlayerCash: number;
   violations: string[];
 }
@@ -77,6 +81,10 @@ export function runObserverSimulation(initial: GameState, days: number, options:
         exciseObligations: 0,
         regulatoryPayments: 0,
         openRegulatoryViolations: 0,
+        primarySiteCount: 0,
+        primaryRawLotCount: 0,
+        harvestCount: 0,
+        primaryProcessingOperations: 0,
         finalPlayerCash: state.finance.cash,
         violations: state.phase === 'operating' ? ['Operating state has no ecosystem'] : [],
       },
@@ -93,6 +101,11 @@ export function runObserverSimulation(initial: GameState, days: number, options:
   if (ecosystem.demand.purchases.some((purchase) => purchase.units <= 0 || purchase.revenue < 0)) violations.push('Некорректная запись потребительской покупки');
   if (ecosystem.regulation.obligations.some((obligation) => obligation.amount < 0)) violations.push('Отрицательное акцизное обязательство');
   if (ecosystem.regulation.payments.some((payment) => payment.amount <= 0)) violations.push('Некорректная регуляторная оплата');
+  if (ecosystem.primaryProduction.rawLots.some((lot) => lot.quantity < 0)) violations.push('Отрицательный остаток первичного сырья');
+  const primarySiteIds = new Set(ecosystem.primaryProduction.sites.map((site) => site.id));
+  if (primarySiteIds.size !== ecosystem.primaryProduction.sites.length) violations.push('Дублирующиеся первичные хозяйства');
+  if (ecosystem.primaryProduction.rawLots.some((lot) => !primarySiteIds.has(lot.siteId))) violations.push('Первичный лот ссылается на неизвестное хозяйство');
+  if (ecosystem.primaryProduction.harvests.some((harvest) => harvest.quantity <= 0 || harvest.quality < 0 || harvest.quality > 100)) violations.push('Некорректная запись урожая');
   const licenseIds = new Set(ecosystem.regulation.licenses.map((license) => license.id));
   if (licenseIds.size !== ecosystem.regulation.licenses.length) violations.push('Дублирующиеся регуляторные лицензии');
   return {
@@ -115,6 +128,10 @@ export function runObserverSimulation(initial: GameState, days: number, options:
       exciseObligations: ecosystem.regulation.obligations.length,
       regulatoryPayments: ecosystem.regulation.payments.length,
       openRegulatoryViolations: ecosystem.regulation.violations.filter((violation) => !violation.resolved).length,
+      primarySiteCount: ecosystem.primaryProduction.sites.length,
+      primaryRawLotCount: ecosystem.primaryProduction.rawLots.length,
+      harvestCount: ecosystem.primaryProduction.harvests.length,
+      primaryProcessingOperations: ecosystem.primaryProduction.operations.filter((operation) => operation.kind === 'processing').length,
       finalPlayerCash: state.finance.cash,
       violations,
     },

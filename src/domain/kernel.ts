@@ -1,6 +1,6 @@
 import { beverageBlueprints, type BeverageCategoryId } from '../data/beverageCatalog';
 
-export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment' | 'authority' | 'license' | 'inspection' | 'tax_obligation';
+export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment' | 'authority' | 'license' | 'inspection' | 'tax_obligation' | 'primary_site' | 'harvest';
 export type LedgerAccount = `org:${string}:cash` | `org:${string}:revenue` | `org:${string}:expense` | `system:${string}`;
 export type ScheduleCadence = 'daily' | 'weekly' | 'monthly' | 'seasonal' | 'annual' | 'once';
 
@@ -28,7 +28,7 @@ export interface KernelEntityRef {
   ownerOrganizationId: string | null;
   countryId: string | null;
   regionId: string | null;
-  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand' | 'regulation';
+  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand' | 'regulation' | 'primary';
 }
 
 export interface KernelProductSpecification {
@@ -70,7 +70,7 @@ export interface KernelGoodsEntry {
 
 export interface KernelTraceNode {
   id: string;
-  entityKind: 'ingredient_lot' | 'production_batch' | 'bulk_lot' | 'package_lot' | 'shipment' | 'sale';
+  entityKind: 'harvest_lot' | 'ingredient_lot' | 'production_batch' | 'bulk_lot' | 'package_lot' | 'shipment' | 'sale';
   entityId: string;
   parentNodeIds: string[];
   organizationId: string;
@@ -149,6 +149,13 @@ export interface KernelRegulationSnapshot {
   payments: Array<{ id: string; day: number; organizationId: string; authorityId: string; amount: number; currency: string; obligationId: string }>;
 }
 
+export interface KernelPrimarySnapshot {
+  sites: Array<{ id: string; assetId: string; organizationId: string; regionId: string; commodityId: string }>;
+  rawLots: Array<{ id: string; organizationId: string; siteId: string; commodityId: string; quantity: number }>;
+  harvests: Array<{ id: string; day: number; siteId: string; organizationId: string; commodityId: string; quantity: number }>;
+  operations: Array<{ id: string; day: number; kind: string; organizationId: string; counterpartyOrganizationId: string | null; commodityId: string; quantity: number; amount: number; inputLotIds: string[]; outputLotIds: string[]; headline: string }>;
+}
+
 export interface KernelCreateInput {
   day: number;
   seedText: string;
@@ -157,20 +164,30 @@ export interface KernelCreateInput {
   trade: KernelTradeSnapshot;
   demand?: KernelDemandSnapshot;
   regulation?: KernelRegulationSnapshot;
+  primaryProduction?: KernelPrimarySnapshot;
 }
 
 export function createEcosystemKernel(input: KernelCreateInput): EcosystemKernelState {
   const seed = hashSeed(input.seedText);
-  const entities = buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation);
+  const entities = buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction);
   const productSpecifications = input.trade.products.map((product) => createProductSpecification(product, input.day));
-  const traceability = input.trade.inventory.map((lot, index) => ({
+  const primaryTrace = (input.primaryProduction?.rawLots ?? []).map((lot, index) => ({
     id: `trace-${index + 1}`,
+    entityKind: 'harvest_lot' as const,
+    entityId: lot.id,
+    parentNodeIds: [],
+    organizationId: lot.organizationId,
+    createdDay: input.day,
+  }));
+  const tradeTrace = input.trade.inventory.map((lot, index) => ({
+    id: `trace-${primaryTrace.length + index + 1}`,
     entityKind: lot.commodityKind === 'ingredient' ? 'ingredient_lot' as const : 'package_lot' as const,
     entityId: lot.id,
     parentNodeIds: [],
     organizationId: lot.organizationId,
     createdDay: input.day,
   }));
+  const traceability = [...primaryTrace, ...tradeTrace];
   return {
     kernelVersion: 1,
     seed,
@@ -194,10 +211,10 @@ export function createEcosystemKernel(input: KernelCreateInput): EcosystemKernel
 
 export function normalizeEcosystemKernel(kernel: EcosystemKernelState | undefined, input: KernelCreateInput): EcosystemKernelState {
   if (!kernel || kernel.kernelVersion !== 1) return createEcosystemKernel(input);
-  const traceability = mergeTraceability(kernel.traceability ?? [], input.trade.inventory, input.day);
+  const traceability = mergeTraceability(kernel.traceability ?? [], input.trade.inventory, input.primaryProduction?.rawLots ?? [], input.day);
   const normalized: EcosystemKernelState = {
     ...kernel,
-    entities: buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation),
+    entities: buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction),
     productSpecifications: mergeProductSpecifications(kernel.productSpecifications ?? [], input.trade.products, input.day),
     moneyLedger: kernel.moneyLedger ?? [],
     goodsLedger: kernel.goodsLedger ?? [],
@@ -282,7 +299,7 @@ export function synchronizeKernelFromTrade(kernel: EcosystemKernelState, trade: 
     });
     recordedGoodsSources.add(sourceId);
   }
-  return { ...next, traceability: mergeTraceability(next.traceability, trade.inventory, day) };
+  return { ...next, traceability: mergeTraceability(next.traceability, trade.inventory, [], day) };
 }
 
 
@@ -331,6 +348,66 @@ export function addTraceNode(kernel: EcosystemKernelState, input: Omit<KernelTra
   for (const parentId of input.parentNodeIds) if (!kernel.traceability.some((node) => node.id === parentId)) throw new Error(`Неизвестный родительский trace node: ${parentId}`);
   const node: KernelTraceNode = { ...input, id: `trace-${kernel.nextTraceNodeNumber}` };
   return { ...kernel, traceability: [...kernel.traceability, node], nextTraceNodeNumber: kernel.nextTraceNodeNumber + 1 };
+}
+
+export function synchronizeKernelFromPrimary(kernel: EcosystemKernelState, primary: KernelPrimarySnapshot, _day: number): EcosystemKernelState {
+  let next = kernel;
+  const recordedGoods = new Set(next.goodsLedger.map((entry) => entry.sourceId));
+  const recordedMoney = new Set(next.moneyLedger.map((entry) => entry.sourceId));
+  const traceByEntity = new Map(next.traceability.map((node) => [node.entityId, node.id]));
+
+  for (const operation of primary.operations) {
+    if (operation.kind === 'harvest' && !recordedGoods.has(operation.id)) {
+      const lotId = operation.outputLotIds[0] ?? null;
+      next = recordGoodsMovement(next, {
+        day: operation.day, commodityId: operation.commodityId, lotId, quantity: operation.quantity, unit: 'kg',
+        fromOrganizationId: null, toOrganizationId: operation.organizationId, fromAssetId: null, toAssetId: null,
+        sourceType: 'harvest', sourceId: operation.id,
+      });
+      recordedGoods.add(operation.id);
+    }
+    if (operation.kind === 'raw_sale') {
+      if (operation.amount > 0 && operation.counterpartyOrganizationId && !recordedMoney.has(operation.id)) {
+        next = recordMoneyTransfer(next, {
+          day: operation.day,
+          debitAccount: `org:${operation.counterpartyOrganizationId}:expense`,
+          creditAccount: `org:${operation.organizationId}:revenue`,
+          amount: operation.amount,
+          currency: 'EUR',
+          sourceType: 'raw_sale',
+          sourceId: operation.id,
+          memo: operation.headline,
+        });
+        recordedMoney.add(operation.id);
+      }
+      if (!recordedGoods.has(operation.id)) {
+        next = recordGoodsMovement(next, {
+          day: operation.day, commodityId: operation.commodityId, lotId: operation.inputLotIds[0] ?? null,
+          quantity: operation.quantity, unit: 'kg', fromOrganizationId: operation.organizationId,
+          toOrganizationId: operation.counterpartyOrganizationId, fromAssetId: null, toAssetId: null,
+          sourceType: 'raw_sale', sourceId: operation.id,
+        });
+        recordedGoods.add(operation.id);
+      }
+    }
+    if (operation.kind === 'processing') {
+      const parentNodeIds = operation.inputLotIds.map((lotId) => traceByEntity.get(lotId)).filter((id): id is string => Boolean(id));
+      for (const outputLotId of operation.outputLotIds) {
+        if (traceByEntity.has(outputLotId)) {
+          const nodeId = traceByEntity.get(outputLotId)!;
+          next = { ...next, traceability: next.traceability.map((node) => node.id === nodeId && node.parentNodeIds.length === 0 ? { ...node, parentNodeIds } : node) };
+          continue;
+        }
+        next = addTraceNode(next, {
+          entityKind: 'ingredient_lot', entityId: outputLotId, parentNodeIds,
+          organizationId: operation.organizationId, createdDay: operation.day,
+        });
+        const created = next.traceability[next.traceability.length - 1];
+        if (created) traceByEntity.set(outputLotId, created.id);
+      }
+    }
+  }
+  return next;
 }
 
 export function traceAncestors(kernel: EcosystemKernelState, nodeId: string): KernelTraceNode[] {
@@ -402,7 +479,7 @@ export function nextRandom(state: number): { state: number; value: number } {
   return { state: next || 1, value: next / 0x1_0000_0000 };
 }
 
-function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: KernelAssetInput[], trade: KernelTradeSnapshot, demand?: KernelDemandSnapshot, regulation?: KernelRegulationSnapshot): KernelEntityRef[] {
+function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: KernelAssetInput[], trade: KernelTradeSnapshot, demand?: KernelDemandSnapshot, regulation?: KernelRegulationSnapshot, primary?: KernelPrimarySnapshot): KernelEntityRef[] {
   const entities: KernelEntityRef[] = [];
   for (const organization of organizations) entities.push({ id: organization.id, kind: 'organization', label: organization.name, ownerOrganizationId: organization.id, countryId: organization.countryId, regionId: organization.regionId, sourceModule: 'ecosystem' });
   for (const asset of assets) entities.push({ id: asset.id, kind: 'asset', label: asset.type, ownerOrganizationId: asset.ownerOrganizationId, countryId: asset.countryId, regionId: asset.regionId, sourceModule: 'ecosystem' });
@@ -417,6 +494,9 @@ function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: K
   for (const license of regulation?.licenses ?? []) entities.push({ id: license.id, kind: 'license', label: license.permitType, ownerOrganizationId: license.organizationId, countryId: license.countryId, regionId: null, sourceModule: 'regulation' });
   for (const obligation of regulation?.obligations ?? []) entities.push({ id: obligation.id, kind: 'tax_obligation', label: obligation.status, ownerOrganizationId: obligation.organizationId, countryId: null, regionId: null, sourceModule: 'regulation' });
   for (const inspection of regulation?.inspections ?? []) entities.push({ id: inspection.id, kind: 'inspection', label: inspection.result, ownerOrganizationId: inspection.organizationId, countryId: null, regionId: null, sourceModule: 'regulation' });
+  for (const site of primary?.sites ?? []) entities.push({ id: `primary-site:${site.id}`, kind: 'primary_site', label: site.commodityId, ownerOrganizationId: site.organizationId, countryId: null, regionId: site.regionId, sourceModule: 'primary' });
+  for (const lot of primary?.rawLots ?? []) entities.push({ id: lot.id, kind: 'lot', label: lot.commodityId, ownerOrganizationId: lot.organizationId, countryId: null, regionId: null, sourceModule: 'primary' });
+  for (const harvest of primary?.harvests ?? []) entities.push({ id: harvest.id, kind: 'harvest', label: harvest.commodityId, ownerOrganizationId: harvest.organizationId, countryId: null, regionId: null, sourceModule: 'primary' });
   return deduplicateEntities(entities);
 }
 
@@ -451,10 +531,15 @@ function nextTraceNumber(nodes: KernelTraceNode[]): number {
   return nodes.reduce((max, node) => Math.max(max, Number(node.id.split('-').at(-1)) || 0), 0) + 1;
 }
 
-function mergeTraceability(current: KernelTraceNode[], lots: KernelLotInput[], day: number): KernelTraceNode[] {
+function mergeTraceability(current: KernelTraceNode[], lots: KernelLotInput[], rawLots: KernelPrimarySnapshot['rawLots'], day: number): KernelTraceNode[] {
   const existingEntities = new Set(current.map((node) => node.entityId));
   let nextNumber = current.reduce((max, node) => Math.max(max, Number(node.id.split('-').at(-1)) || 0), 0) + 1;
   const additions: KernelTraceNode[] = [];
+  for (const lot of rawLots) {
+    if (existingEntities.has(lot.id)) continue;
+    additions.push({ id: `trace-${nextNumber++}`, entityKind: 'harvest_lot', entityId: lot.id, parentNodeIds: [], organizationId: lot.organizationId, createdDay: day });
+    existingEntities.add(lot.id);
+  }
   for (const lot of lots) {
     if (existingEntities.has(lot.id)) continue;
     additions.push({
@@ -465,6 +550,7 @@ function mergeTraceability(current: KernelTraceNode[], lots: KernelLotInput[], d
       organizationId: lot.organizationId,
       createdDay: day,
     });
+    existingEntities.add(lot.id);
   }
   return [...current, ...additions];
 }

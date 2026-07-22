@@ -28,7 +28,7 @@ describe('trade ecosystem', () => {
   it('создаёт поставщиков, продукты, контракты и реальные полки', () => {
     const state = createWorld();
     expect(state.organizations.some((organization) => organization.kind === 'supplier')).toBe(true);
-    expect(state.assets.some((asset) => asset.type === 'warehouse' && asset.ownerOrganizationId?.startsWith('org-supplier-'))).toBe(true);
+    expect(state.assets.some((asset) => ['malt_house', 'hop_packer', 'fruit_pool', 'sugar_refinery', 'culture_lab', 'glass_plant'].includes(asset.type) && asset.ownerOrganizationId?.startsWith('org-supplier-'))).toBe(true);
     expect(state.trade.products.length).toBeGreaterThanOrEqual(companies.length);
     expect(state.trade.contracts.some((contract) => contract.commodityKind === 'ingredient')).toBe(true);
     expect(state.trade.contracts.some((contract) => contract.commodityKind === 'product')).toBe(true);

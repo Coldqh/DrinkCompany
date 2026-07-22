@@ -25,6 +25,9 @@ describe('observer simulation', () => {
     expect(result.report.activeLicenses).toBeGreaterThan(0);
     expect(result.report.exciseObligations).toBeGreaterThan(0);
     expect(result.report.regulatoryPayments).toBeGreaterThan(0);
+    expect(result.report.primarySiteCount).toBeGreaterThan(8);
+    expect(result.report.harvestCount).toBeGreaterThan(0);
+    expect(result.report.primaryProcessingOperations).toBeGreaterThan(0);
     expect(result.report.violations).toEqual([]);
   });
 });

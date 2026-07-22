@@ -18,6 +18,8 @@ import { commodityName, inventoryQuantity, productFamilyLabel, type TradeProduct
 import { regionDemandSummary } from '../../domain/demand';
 import { leaderRoleLabel, strategyLabel } from '../../domain/worldIntelligence';
 import { activeLicensesForOrganization, organizationCompliance } from '../../domain/regulation';
+import { primaryCommodity } from '../../data/primaryProductionCatalog';
+import { primarySiteLabel, processorLabel } from '../../domain/primaryProduction';
 import type { RetailVenueStatus, RetailVenueType } from '../../domain/retail';
 import { Icon } from '../../ui/Icon';
 import { CompactHeader, EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
@@ -364,6 +366,15 @@ function OrganizationModal({ organization, assets, ecosystem, currentShare, cash
         </>;
       })()}
       <div className="organization-assets"><span>Объекты</span>{assets.length === 0 ? <small>Собственной недвижимости нет.</small> : assets.map((asset) => <div key={asset.id}><strong>{asset.name}</strong><small>{assetTypeLabel(asset.type)} · {asset.city} · {asset.status === 'for_sale' ? 'продаётся' : 'работает'}</small></div>)}</div>
+      {(() => {
+        const sites = ecosystem.primaryProduction.sites.filter((site) => site.organizationId === organization.id);
+        const processors = ecosystem.primaryProduction.processors.filter((processor) => processor.organizationId === organization.id);
+        if (sites.length === 0 && processors.length === 0) return null;
+        return <div className="organization-assets"><span>Первичный сектор</span>
+          {sites.map((site) => <div key={site.id}><strong>{primaryCommodity(site.commodityId).name}</strong><small>{primarySiteLabel(site.kind)} · {site.hectares} га · {site.stage} · здоровье {Math.round(site.health)}/100 · ожидается {Math.round(site.expectedYield)} кг</small></div>)}
+          {processors.map((processor) => <div key={processor.id}><strong>{processorLabel(processor.kind)}</strong><small>состояние {Math.round(processor.condition)}/100 · переработано {Math.round(processor.totalInputProcessed)} кг · {processor.blockedReason ?? 'работает'}</small></div>)}
+        </div>;
+      })()}
       <div className="organization-assets"><span>Цепочка операций</span>{ecosystem.trade.products.filter((product) => product.producerOrganizationId === organization.id).map((product) => <div key={product.id}><strong>{product.name}</strong><small>{productFamilyLabel(product.family)} · склад {Math.round(inventoryQuantity(ecosystem.trade, organization.id, 'product', product.id))} · продано {product.totalSold}</small></div>)}{ecosystem.trade.contracts.filter((contract) => contract.buyerOrganizationId === organization.id || contract.sellerOrganizationId === organization.id).slice(0, 6).map((contract) => { const counterpartyId = contract.sellerOrganizationId === organization.id ? contract.buyerOrganizationId : contract.sellerOrganizationId; const counterparty = ecosystem.organizations.find((item) => item.id === counterpartyId); return <div key={contract.id}><strong>{contract.sellerOrganizationId === organization.id ? 'Поставляет' : 'Покупает'}: {commodityName(ecosystem.trade, contract.commodityKind, contract.commodityId)}</strong><small>{counterparty?.name} · каждые {contract.intervalDays} дн. · {contract.lastResult}</small></div>; })}</div>
 
       {!controlled && <>

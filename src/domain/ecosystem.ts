@@ -22,7 +22,8 @@ import { suppliers } from '../data/supplyCatalog';
 import { advanceTradeDay, createTradeState, normalizeTradeState, type TradeState } from './trade';
 import { advanceDemandDay, createDemandState, normalizeDemandState, type DemandState } from './demand';
 import { advanceRegulationDay, createRegulationState, normalizeRegulationState, type RegulationState } from './regulation';
-import { advanceKernelDay, createEcosystemKernel, normalizeEcosystemKernel, synchronizeKernelFromRegulation, synchronizeKernelFromTrade, type EcosystemKernelState } from './kernel';
+import { advancePrimaryProductionDay, createPrimarySector, ensurePrimarySector, type PrimaryProductionState } from './primaryProduction';
+import { advanceKernelDay, createEcosystemKernel, normalizeEcosystemKernel, synchronizeKernelFromPrimary, synchronizeKernelFromRegulation, synchronizeKernelFromTrade, type EcosystemKernelState } from './kernel';
 import {
   advanceWorldIntelligence,
   createWorldIntelligenceState,
@@ -32,7 +33,7 @@ import {
 
 export type OrganizationKind = 'player' | 'producer' | 'hospitality' | 'retailer' | 'supplier' | 'holding';
 export type OrganizationStatus = 'active' | 'strained' | 'insolvent' | 'acquired';
-export type AssetType = 'production' | 'bar' | 'shop' | 'warehouse' | 'laboratory' | 'office' | 'vacant_commercial';
+export type AssetType = 'production' | 'bar' | 'shop' | 'warehouse' | 'laboratory' | 'office' | 'vacant_commercial' | 'field' | 'hop_yard' | 'orchard' | 'vineyard' | 'apiary' | 'botanical_farm' | 'malt_house' | 'hop_packer' | 'fruit_pool' | 'sugar_refinery' | 'culture_lab' | 'glass_plant';
 export type AssetStatus = 'operating' | 'closed' | 'for_sale' | 'vacant';
 export type DealKind = 'acquisition' | 'lease' | 'investment' | 'takeover' | 'capital_injection' | 'asset_transfer' | 'npc_acquisition' | 'bankruptcy';
 export type SubsidiaryAutonomy = 'autonomous' | 'guided' | 'integrated';
@@ -130,6 +131,7 @@ export interface EcosystemState {
   intelligence: WorldIntelligenceState;
   kernel: EcosystemKernelState;
   regulation: RegulationState;
+  primaryProduction: PrimaryProductionState;
 }
 
 export interface EcosystemAdvanceResult {
@@ -275,7 +277,7 @@ export function createEcosystemState(input: {
     const regionId = defaultRegionForCountry(countryId);
     return {
       id: `asset-supplier-${supplier.id}`,
-      type: 'warehouse',
+      type: supplierAssetType(supplier.id),
       name: `${supplier.name} Hub`,
       city: cityForRegion(regionId),
       countryId,
@@ -371,8 +373,9 @@ export function createEcosystemState(input: {
     venue: null,
   };
 
-  const organizations = [player, ...companyOrganizations, ...supplierOrganizations, ...outletOrganizations, ...landlordOrganizations];
-  const assets = [playerAsset, ...producerAssets, ...supplierAssets, ...outletAssets, ...vacantAssets];
+  const primarySector = createPrimarySector(input.day);
+  const organizations = [player, ...companyOrganizations, ...supplierOrganizations, ...outletOrganizations, ...landlordOrganizations, ...primarySector.organizations];
+  const assets = [playerAsset, ...producerAssets, ...supplierAssets, ...outletAssets, ...vacantAssets, ...primarySector.assets];
   const trade = createTradeState(organizations, assets, input.day);
   const demand = createDemandState(input.day, `${input.playerCompanyName}:${input.countryId}:${input.regionId}`);
   const regulation = createRegulationState(organizations, assets, trade, input.day);
@@ -384,6 +387,7 @@ export function createEcosystemState(input: {
     trade,
     demand,
     regulation,
+    primaryProduction: primarySector.primaryProduction,
   });
   return {
     playerOrganizationId,
@@ -403,6 +407,7 @@ export function createEcosystemState(input: {
     intelligence: createWorldIntelligenceState(organizations, input.day),
     kernel,
     regulation,
+    primaryProduction: primarySector.primaryProduction,
   };
 }
 
@@ -459,28 +464,38 @@ export function migrateRetailIntoEcosystem(ecosystem: EcosystemState, retail: Re
 
 
 export function normalizeEcosystemState(state: EcosystemState, day: number): EcosystemState {
-  const trade = state.trade && Array.isArray(state.trade.products)
-    ? normalizeTradeState(state.trade)
-    : createTradeState(state.organizations, state.assets, day);
-  const demand = normalizeDemandState(state.demand, day, `${state.playerOrganizationId}:${state.organizations.length}:${state.assets.length}`);
-  const regulation = normalizeRegulationState(state.regulation, state.organizations, state.assets, trade, day);
-  const kernel = normalizeEcosystemKernel(state.kernel, {
-    day,
-    seedText: `${state.playerOrganizationId}:${state.organizations.length}:${state.assets.length}`,
+  const primarySector = ensurePrimarySector({
+    state: state.primaryProduction,
     organizations: state.organizations,
     assets: state.assets,
+    day,
+  });
+  const trade = state.trade && Array.isArray(state.trade.products)
+    ? normalizeTradeState(state.trade)
+    : createTradeState(primarySector.organizations, primarySector.assets, day);
+  const demand = normalizeDemandState(state.demand, day, `${state.playerOrganizationId}:${primarySector.organizations.length}:${primarySector.assets.length}`);
+  const regulation = normalizeRegulationState(state.regulation, primarySector.organizations, primarySector.assets, trade, day);
+  const kernel = normalizeEcosystemKernel(state.kernel, {
+    day,
+    seedText: `${state.playerOrganizationId}:${primarySector.organizations.length}:${primarySector.assets.length}`,
+    organizations: primarySector.organizations,
+    assets: primarySector.assets,
     trade,
     demand,
     regulation,
+    primaryProduction: primarySector.primaryProduction,
   });
   return {
     ...state,
+    organizations: primarySector.organizations,
+    assets: primarySector.assets,
+    primaryProduction: primarySector.primaryProduction,
     subsidiaries: state.subsidiaries ?? [],
     trade,
     demand,
     kernel,
     regulation,
-    intelligence: normalizeWorldIntelligenceState(state.intelligence, state.organizations, day),
+    intelligence: normalizeWorldIntelligenceState(state.intelligence, primarySector.organizations, day),
   };
 }
 
@@ -736,6 +751,9 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   let ecosystem = mergeRetailState({ ...state, demand: retailAdvance.demand ?? demand, trade: normalizeTradeState(state.trade) }, retailAdvance.retail);
   const events: EcosystemAdvanceResult['events'] = [];
   const playerCost = ecosystemPlayerDailyCost(ecosystem);
+  const primaryAdvance = advancePrimaryProductionDay(ecosystem.primaryProduction, ecosystem.organizations, ecosystem.trade, day);
+  ecosystem = { ...ecosystem, primaryProduction: primaryAdvance.primaryProduction, trade: primaryAdvance.trade, organizations: primaryAdvance.organizations };
+  events.push(...primaryAdvance.events);
   const tradeAdvance = advanceTradeDay(ecosystem.trade, ecosystem.organizations, ecosystem.assets, day, ecosystem.demand);
   ecosystem = { ...ecosystem, trade: tradeAdvance.trade, demand: tradeAdvance.demand, organizations: tradeAdvance.organizations };
   events.push(...tradeAdvance.events);
@@ -823,8 +841,9 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   ecosystem = {
     ...ecosystem,
     kernel: synchronizeKernelFromRegulation(
-      synchronizeKernelFromTrade(
-        advanceKernelDay(
+      synchronizeKernelFromPrimary(
+        synchronizeKernelFromTrade(
+          advanceKernelDay(
           normalizeEcosystemKernel(ecosystem.kernel, {
             day,
             seedText: `${ecosystem.playerOrganizationId}:${ecosystem.organizations.length}:${ecosystem.assets.length}`,
@@ -833,11 +852,15 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
             trade: ecosystem.trade,
             demand: ecosystem.demand,
             regulation: ecosystem.regulation,
+            primaryProduction: ecosystem.primaryProduction,
           }),
           day,
+            ecosystem.trade,
+          ),
           ecosystem.trade,
+          day,
         ),
-        ecosystem.trade,
+        ecosystem.primaryProduction,
         day,
       ),
       ecosystem.regulation,
@@ -860,6 +883,8 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
 export function assetTypeLabel(type: AssetType): string {
   const labels: Record<AssetType, string> = {
     production: 'Производство', bar: 'Бар', shop: 'Магазин', warehouse: 'Склад', laboratory: 'Лаборатория', office: 'Офис', vacant_commercial: 'Свободный объект',
+    field: 'Поле', hop_yard: 'Хмельник', orchard: 'Сад', vineyard: 'Виноградник', apiary: 'Пасека', botanical_farm: 'Ботаническое хозяйство',
+    malt_house: 'Солодовня', hop_packer: 'Хмелевой центр', fruit_pool: 'Фруктовый кооператив', sugar_refinery: 'Сахарный завод', culture_lab: 'Дрожжевая лаборатория', glass_plant: 'Стекольный завод',
   };
   return labels[type];
 }
@@ -869,6 +894,16 @@ export function organizationKindLabel(kind: OrganizationKind): string {
     player: 'Компания игрока', producer: 'Производитель', hospitality: 'Оператор заведений', retailer: 'Ритейлер', supplier: 'Поставщик', holding: 'Холдинг',
   };
   return labels[kind];
+}
+
+function supplierAssetType(supplierId: string): AssetType {
+  if (supplierId === 'rhein-malt' || supplierId === 'kent-grain') return 'malt_house';
+  if (supplierId === 'hallertau-hop' || supplierId === 'yakima-hop') return 'hop_packer';
+  if (supplierId === 'normandy-orchard' || supplierId === 'somerset-fruit' || supplierId === 'asturias-fruit') return 'fruit_pool';
+  if (supplierId === 'bulk-sugar') return 'sugar_refinery';
+  if (supplierId === 'ferment-lab') return 'culture_lab';
+  if (supplierId === 'pack-glass') return 'glass_plant';
+  return 'warehouse';
 }
 
 function stateToRetail(state: EcosystemState): RetailState {
