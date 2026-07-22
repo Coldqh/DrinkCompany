@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import type { ActionResult } from '../../app/useGameState';
 import type { GameState } from '../../domain/game';
 import { averageQuality, statusLabel, type BatchState } from '../../domain/production';
 import { getPackagingRequirement, inventoryQuantity, formatQuantity } from '../../domain/supply';
 import { Icon } from '../../ui/Icon';
-import { CompactHeader, EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
+import { EmptyState, Modal } from '../../ui/MobileUI';
 
 interface BatchBoardProps {
   state: GameState;
@@ -14,80 +14,30 @@ interface BatchBoardProps {
   onOpenProduction: () => void;
 }
 
-type BatchSection = 'active' | 'ready' | 'history';
-
 export function BatchBoard({ state, onTaste, onPackage, onDiscard, onOpenProduction }: BatchBoardProps) {
   const [feedback, setFeedback] = useState<ActionResult | null>(null);
-  const [section, setSection] = useState<BatchSection>('active');
   const [selectedBatch, setSelectedBatch] = useState<BatchState | null>(null);
-  const batches = state.production.batches;
+  const batches = [...state.production.batches].sort((a, b) => b.startedDay - a.startedDay);
   const hasBottler = state.production.equipmentIds.includes('compact-bottler');
-
-  const filtered = useMemo(() => batches.filter((batch) => {
-    if (section === 'active') return ['fermenting', 'conditioning'].includes(batch.status);
-    if (section === 'ready') return ['ready', 'tasted'].includes(batch.status);
-    return ['packaged', 'discarded'].includes(batch.status);
-  }), [batches, section]);
-
-  const counts = {
-    active: batches.filter((batch) => ['fermenting', 'conditioning'].includes(batch.status)).length,
-    ready: batches.filter((batch) => ['ready', 'tasted'].includes(batch.status)).length,
-    history: batches.filter((batch) => ['packaged', 'discarded'].includes(batch.status)).length,
-  };
 
   function handle(result: ActionResult) {
     setFeedback(result);
-    window.setTimeout(() => setFeedback(null), 3200);
+    window.setTimeout(() => setFeedback(null), 2600);
     if (result.ok) setSelectedBatch(null);
   }
 
-  return (
-    <div className="screen-stack batch-compact">
-      {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
-
-      <CompactHeader
-        kicker="Партии"
-        title="Производственная очередь"
-        meta={`${counts.active} в работе · ${counts.ready} ждут решения · ${counts.history} завершено`}
-        action={<button className="round-action" onClick={onOpenProduction}><Icon name="factory" /></button>}
-      />
-
-      <SubTabs value={section} onChange={setSection} options={[
-        { id: 'active', label: 'В работе', badge: counts.active },
-        { id: 'ready', label: 'Решения', badge: counts.ready },
-        { id: 'history', label: 'История', badge: counts.history },
-      ]} />
-
-      {filtered.length === 0 ? (
-        <section className="glass-card"><EmptyState icon="batch" title={section === 'active' ? 'Нет активных партий' : section === 'ready' ? 'Нечего дегустировать' : 'История пока пустая'} text={section === 'active' ? 'Создай рецепт и запусти новую партию.' : 'Нужные партии появятся здесь автоматически.'} action={section === 'active' ? <button className="button primary" onClick={onOpenProduction}>Новая партия</button> : undefined} /></section>
-      ) : (
-        <section className="compact-list glass-card">
-          {filtered.map((batch) => (
-            <button key={batch.id} className="batch-row compact-list-row" onClick={() => setSelectedBatch(batch)}>
-              <div className={`batch-ring status-${batch.status}`}><strong>{batch.status === 'packaged' ? batch.availableUnits : batch.progress}</strong><small>{batch.status === 'packaged' ? 'бут.' : '%'}</small></div>
-              <span><strong>{batch.recipe.name}</strong><small>{batch.code} · {statusLabel(batch.status)} · {batch.recipe.volumeLiters} л</small></span>
-              <span className="batch-row-meta">{batch.tasting ? `${averageQuality(batch.quality)}/100` : batch.status === 'ready' ? 'готово' : `день ${batch.readyDay}`}</span>
-            </button>
-          ))}
-        </section>
-      )}
-
-      {selectedBatch && (
-        <BatchModal
-          batch={selectedBatch}
-          currentDay={state.day}
-          hasBottler={hasBottler}
-          bottleStock={inventoryQuantity(state.supply.inventory, 'bottles')}
-          onClose={() => setSelectedBatch(null)}
-          onTaste={() => handle(onTaste(selectedBatch.id))}
-          onPackage={() => handle(onPackage(selectedBatch.id))}
-          onDiscard={() => handle(onDiscard(selectedBatch.id))}
-        />
-      )}
-    </div>
-  );
+  return <div className="simple-hub">
+    {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
+    {batches.length === 0 ? <div className="plain-panel"><EmptyState icon="batch" title="Партий пока нет" text="Создай рецепт и запусти производство." action={<button className="button primary" onClick={onOpenProduction}>Новая партия</button>} /></div> : <div className="simple-list plain-panel">
+      {batches.map((batch) => <button key={batch.id} onClick={() => setSelectedBatch(batch)}>
+        <span className="batch-status-mark"><strong>{batch.status === 'packaged' ? batch.availableUnits : batch.progress}</strong><small>{batch.status === 'packaged' ? 'бут.' : '%'}</small></span>
+        <span><strong>{batch.recipe.name}</strong><small>{batch.code} · {statusLabel(batch.status)} · {batch.recipe.volumeLiters} л</small></span>
+        <b>{batch.tasting ? `${averageQuality(batch.quality)}` : batch.status === 'ready' ? 'готово' : `день ${batch.readyDay}`}</b>
+      </button>)}
+    </div>}
+    {selectedBatch && <BatchModal batch={selectedBatch} currentDay={state.day} hasBottler={hasBottler} bottleStock={inventoryQuantity(state.supply.inventory, 'bottles')} onClose={() => setSelectedBatch(null)} onTaste={() => handle(onTaste(selectedBatch.id))} onPackage={() => handle(onPackage(selectedBatch.id))} onDiscard={() => handle(onDiscard(selectedBatch.id))} />}
+  </div>;
 }
-
 function BatchModal({ batch, currentDay, hasBottler, bottleStock, onClose, onTaste, onPackage, onDiscard }: { batch: BatchState; currentDay: number; hasBottler: boolean; bottleStock: number; onClose: () => void; onTaste: () => void; onPackage: () => void; onDiscard: () => void }) {
   const quality = averageQuality(batch.quality);
   const daysLeft = Math.max(0, batch.readyDay - currentDay);

@@ -18,7 +18,7 @@ import { commodityName, inventoryQuantity, productFamilyLabel, type TradeProduct
 import { leaderRoleLabel, strategyLabel } from '../../domain/worldIntelligence';
 import type { RetailVenueStatus, RetailVenueType } from '../../domain/retail';
 import { Icon } from '../../ui/Icon';
-import { CompactHeader, EmptyState, MiniStat, Modal, SubTabs } from '../../ui/MobileUI';
+import { CompactHeader, EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
 
 type Section = 'city' | 'organizations' | 'flows' | 'group' | 'control' | 'chronicle' | 'deals';
 
@@ -55,7 +55,6 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
   const saleAssets = commercialAssets.filter((asset) => asset.status === 'for_sale' || asset.status === 'vacant').length;
   const strainedOrganizations = organizations.filter((organization) => ['strained', 'insolvent'].includes(organization.status)).length;
   const activeShipments = ecosystem.trade.shipments.filter((shipment) => shipment.status === 'in_transit' || shipment.status === 'delayed').length;
-  const strategicChanges = ecosystem.intelligence.chronicle.filter((entry) => entry.day >= state.day - 7).length;
   const bottlenecks = ecosystem.trade.contracts.filter((contract) => contract.failures > 0).length
     + ecosystem.trade.batches.filter((batch) => batch.status === 'blocked').length
     + ecosystem.trade.shelves.filter((listing) => listing.units <= 0).length;
@@ -76,26 +75,15 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
       {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
 
       <CompactHeader
-        kicker="единая экосистема"
-        title="Город и компании"
-        meta="Все бары, магазины и производства имеют владельцев, деньги, долги и историю."
+        kicker="Мир"
+        title="Объекты и организации"
+        meta={`${organizations.length} компаний · ${controlledAssets.length} активов под контролем`}
       />
 
-      <section className="mini-stat-grid four">
-        <MiniStat label="Организаций" value={String(organizations.length)} note={`${strainedOrganizations} под давлением`} />
-        <MiniStat label="Продуктов" value={String(ecosystem.trade.products.filter((product) => product.status === 'active').length)} note={`${ecosystem.trade.shelves.length} мест на полках`} />
-        <MiniStat label="В пути" value={String(activeShipments)} note={`${bottlenecks} узких мест`} />
-        <MiniStat label="Под контролем" value={String(controlledAssets.length)} note={`${saleAssets} объектов доступны`} />
-      </section>
-
       <SubTabs value={section} onChange={setSection} options={[
-        { id: 'city', label: 'Город', badge: saleAssets },
-        { id: 'organizations', label: 'Компании', badge: strainedOrganizations },
-        { id: 'flows', label: 'Цепочки', badge: bottlenecks },
-        { id: 'group', label: 'Группа', badge: subsidiaries.length },
-        { id: 'control', label: 'Контроль', badge: controlledAssets.length },
-        { id: 'chronicle', label: 'Хроника', badge: strategicChanges },
-        { id: 'deals', label: 'Сделки' },
+        { id: 'city', label: 'Карта', badge: saleAssets },
+        { id: 'organizations', label: 'Организации', badge: strainedOrganizations },
+        { id: 'group', label: 'Группа', badge: subsidiaries.length + controlledAssets.length },
       ]} />
 
       {section === 'city' && (
@@ -202,6 +190,19 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
                 </article>;
               })}
             </section>
+      )}
+
+      {section === 'group' && controlledAssets.length > 0 && (
+        <section className="controlled-assets">
+          <div className="section-heading"><span>Объекты под управлением</span><b>{controlledAssets.length}</b></div>
+          {controlledAssets.map((asset) => (
+            <article key={asset.id} className="controlled-asset-card glass-card">
+              <header><div><span>{assetTypeLabel(asset.type)} · {asset.city}</span><strong>{asset.name}</strong></div><span className="row-status neutral">{asset.status === 'operating' ? 'работает' : 'закрыт'}</span></header>
+              <div className="detail-grid"><Detail label="Состояние" value={`${Math.round(asset.condition)}/100`} /><Detail label="Расход" value={`${formatMoney(asset.dailyOperatingCost)}/д`} /></div>
+              <div className="controlled-actions"><button className="button primary" onClick={() => setAssetModal(asset)}>Управление</button>{asset.venue && <button className="button secondary" onClick={() => setStockAsset(asset)}>Полка</button>}</div>
+            </article>
+          ))}
+        </section>
       )}
 
       {section === 'control' && (

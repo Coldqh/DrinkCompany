@@ -3,7 +3,6 @@ import type { ActionResult } from '../../app/useGameState';
 import {
   CAMPAIGN_CATALOG,
   DEFAULT_PACKAGING,
-  campaignLabel,
   positioningLabel,
   type BrandDraft,
   type BrandPositioning,
@@ -14,9 +13,7 @@ import {
 } from '../../domain/brand';
 import type { GameState } from '../../domain/game';
 import { Icon } from '../../ui/Icon';
-import { EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
-
-type Section = 'brands' | 'packaging' | 'releases' | 'promotion';
+import { EmptyState, Modal } from '../../ui/MobileUI';
 
 export function BrandHub({ state, onCreateBrand, onCreateRelease, onLaunchCampaign }: {
   state: GameState;
@@ -24,67 +21,39 @@ export function BrandHub({ state, onCreateBrand, onCreateRelease, onLaunchCampai
   onCreateRelease: (draft: ReleaseDraft) => ActionResult;
   onLaunchCampaign: (releaseId: string, type: CampaignType) => ActionResult;
 }) {
-  const [section, setSection] = useState<Section>('brands');
   const [brandModal, setBrandModal] = useState(false);
   const [releaseModal, setReleaseModal] = useState(false);
   const [campaignRelease, setCampaignRelease] = useState<ProductRelease | null>(null);
   const [feedback, setFeedback] = useState<ActionResult | null>(null);
   const activeReleases = state.brand.releases.filter((release) => release.status === 'active');
-  const activeCampaigns = state.brand.campaigns.filter((campaign) => campaign.status === 'active');
-  const awareness = state.brand.brands.length ? Math.round(state.brand.brands.reduce((sum, brand) => sum + brand.awareness, 0) / state.brand.brands.length) : 0;
 
   function show(result: ActionResult) {
     setFeedback(result);
-    window.setTimeout(() => setFeedback(null), 3000);
+    window.setTimeout(() => setFeedback(null), 2600);
   }
 
-  return <div className="screen-stack brand-hub">
+  return <div className="simple-hub">
     {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
-    <section className="brand-summary-line"><span className="brand-command-mark">B</span><div><strong>Коммерческий слой</strong><small>{state.brand.brands.length} брендов · {activeReleases.length} релизов · узнаваемость {awareness}</small></div><b>{activeCampaigns.length > 0 ? `${activeCampaigns.length} камп.` : 'тихо'}</b></section>
-    <SubTabs value={section} onChange={setSection} options={[
-      { id: 'brands', label: 'Бренды' },
-      { id: 'packaging', label: 'Упаковка' },
-      { id: 'releases', label: 'Релизы', badge: activeReleases.length },
-      { id: 'promotion', label: 'Продвижение', badge: activeCampaigns.length },
-    ]} />
-
-    {section === 'brands' && <>
-      <button className="brand-primary-card" onClick={() => setBrandModal(true)}><span><Icon name="spark" /></span><div><strong>Создать новый бренд</strong><small>Название, позиционирование и история линейки</small></div><Icon name="arrow" /></button>
-      {state.brand.brands.length === 0 ? <section className="glass-card"><EmptyState icon="market" title="Брендов пока нет" text="Создай коммерческое имя отдельно от компании." /></section> : <section className="compact-list glass-card">{state.brand.brands.map((brand) => <div className="compact-list-row static" key={brand.id}><span className="brand-list-mark">{brand.name.slice(0, 1)}</span><span><strong>{brand.name}</strong><small>{positioningLabel(brand.positioning)} · узнаваемость {brand.awareness} · репутация {brand.reputation}</small></span><span className="row-status neutral">{state.brand.releases.filter((release) => release.brandId === brand.id).length}</span></div>)}</section>}
-    </>}
-
-    {section === 'packaging' && <PackagingGallery />}
-
-    {section === 'releases' && <>
-      <button className="brand-primary-card" disabled={state.brand.brands.length === 0 || !state.production.batches.some((batch) => batch.status === 'packaged')} onClick={() => setReleaseModal(true)}><span><Icon name="bottle" /></span><div><strong>Подготовить релиз</strong><small>Связать партию, бренд, упаковку и цену</small></div><Icon name="arrow" /></button>
-      {state.brand.releases.length === 0 ? <section className="glass-card"><EmptyState icon="bottle" title="Коммерческих релизов нет" text="Нужны бренд и разлитая партия." /></section> : <section className="compact-list glass-card">{state.brand.releases.map((release) => {
-        const brand = state.brand.brands.find((item) => item.id === release.brandId);
-        const batch = state.production.batches.find((item) => item.id === release.batchId);
-        return <button key={release.id} className="compact-list-row" onClick={() => setCampaignRelease(release)}><span className="release-bottle-mark"><i /></span><span><strong>{release.name}</strong><small>{brand?.name} · {batch?.code} · {release.packaging.volumeMl} мл · узнаваемость {release.awareness}</small></span><span className="row-status neutral">{release.wholesalePrice.toFixed(2)}</span></button>;
-      })}</section>}
-    </>}
-
-    {section === 'promotion' && <>
-      {activeReleases.length === 0 ? <section className="glass-card"><EmptyState icon="market" title="Продвигать пока нечего" text="Сначала выпусти коммерческий релиз." /></section> : <section className="compact-list glass-card">{activeReleases.map((release) => <button key={release.id} className="compact-list-row" onClick={() => setCampaignRelease(release)}><span className="row-icon"><Icon name="market" /></span><span><strong>{release.name}</strong><small>Узнаваемость {release.awareness} · визуальная сила {release.visualAppeal}</small></span><Icon name="arrow" /></button>)}</section>}
-      {state.brand.campaigns.length > 0 && <section className="compact-list glass-card">{state.brand.campaigns.map((campaign) => <div key={campaign.id} className="compact-list-row static"><span className={`row-icon ${campaign.status === 'active' ? 'proposal-reviewing' : ''}`}><Icon name={campaign.status === 'active' ? 'clock' : 'check'} /></span><span><strong>{campaignLabel(campaign.type)}</strong><small>{campaign.report}</small></span><span className="row-status neutral">{campaign.status === 'active' ? `до ${campaign.endDay}` : 'готово'}</span></div>)}</section>}
-    </>}
+    <div className="hub-summary">
+      <div><span>Бренды</span><strong>{state.brand.brands.length}</strong></div>
+      <div><span>Активные товары</span><strong>{activeReleases.length}</strong></div>
+    </div>
+    <div className="inline-actions">
+      <button className="button secondary" onClick={() => setBrandModal(true)}>Новый бренд</button>
+      <button className="button primary" disabled={state.brand.brands.length === 0 || !state.production.batches.some((batch) => batch.status === 'packaged')} onClick={() => setReleaseModal(true)}>Новый товар</button>
+    </div>
+    {state.brand.releases.length === 0 ? <div className="plain-panel"><EmptyState icon="bottle" title="Товаров пока нет" text="Создай бренд и свяжи его с разлитой партией." /></div> : <div className="simple-list plain-panel">{state.brand.releases.map((release) => {
+      const brand = state.brand.brands.find((item) => item.id === release.brandId);
+      const batch = state.production.batches.find((item) => item.id === release.batchId);
+      return <button key={release.id} onClick={() => setCampaignRelease(release)}><span className="product-mark"><Icon name="bottle" /></span><span><strong>{release.name}</strong><small>{brand?.name} · {batch?.availableUnits ?? 0} бут. · узнаваемость {release.awareness}</small></span><b>{release.wholesalePrice.toFixed(2)}</b></button>;
+    })}</div>}
+    {state.brand.campaigns.some((campaign) => campaign.status === 'active') && <div className="quiet-banner"><Icon name="clock" /><span>{state.brand.campaigns.filter((campaign) => campaign.status === 'active').length} кампании сейчас в работе</span></div>}
 
     {brandModal && <BrandModal onClose={() => setBrandModal(false)} onCreate={(draft) => { const result = onCreateBrand(draft); show(result); if (result.ok) setBrandModal(false); }} />}
     {releaseModal && <ReleaseModal state={state} onClose={() => setReleaseModal(false)} onCreate={(draft) => { const result = onCreateRelease(draft); show(result); if (result.ok) setReleaseModal(false); }} />}
     {campaignRelease && <CampaignModal release={campaignRelease} cash={state.finance.cash} onClose={() => setCampaignRelease(null)} onLaunch={(type) => { const result = onLaunchCampaign(campaignRelease.id, type); show(result); if (result.ok) setCampaignRelease(null); }} />}
   </div>;
 }
-
-function PackagingGallery() {
-  const cards: Array<[string, string, string]> = [
-    ['NOIR 500', 'Чёрное стекло · минимальная этикетка', 'premium'],
-    ['CELLAR 750', 'Винная форма · пробка · короб', 'heritage'],
-    ['YARD 330', 'Короткая бутылка · индустриальная графика', 'industrial'],
-    ['FIELD 500', 'Дымчатое стекло · редакционная сетка', 'editorial'],
-  ];
-  return <section className="packaging-gallery">{cards.map(([name, detail, kind]) => <article className={`package-concept ${kind}`} key={name}><div className="package-bottle"><i /><b>{name.split(' ')[0]}</b></div><div><strong>{name}</strong><small>{detail}</small></div></article>)}</section>;
-}
-
 function BrandModal({ onClose, onCreate }: { onClose: () => void; onCreate: (draft: BrandDraft) => void }) {
   const [draft, setDraft] = useState<BrandDraft>({ name: '', tagline: '', positioning: 'local', story: '' });
   return <Modal title="Новый бренд" kicker="Отдельно от компании" onClose={onClose} footer={<button className="button primary" onClick={() => onCreate(draft)}>Создать бренд</button>}>

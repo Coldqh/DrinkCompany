@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ActionResult } from '../../app/useGameState';
-import { getIngredient, type IngredientCategory } from '../../data/supplyCatalog';
+import type { IngredientCategory } from '../../data/supplyCatalog';
 import { equipmentAvailable, maxActiveBatches, type FacilityRoomId, type FacilityUtilityId } from '../../domain/facility';
 import type { GameState } from '../../domain/game';
 import {
@@ -10,20 +10,25 @@ import {
   getStyle,
   getStylesForFamily,
   requiredEquipmentIds,
+  statusLabel,
   type ProductFamily,
   type RecipeDraft,
 } from '../../domain/production';
 import { buildSupplyPlan, formatQuantity, getRecipeRequirements } from '../../domain/supply';
 import { SupplyHub } from '../supply/SupplyHub';
 import { FacilityHub } from '../facility/FacilityHub';
+import { BatchBoard } from '../batches/BatchBoard';
 import { Icon } from '../../ui/Icon';
-import { CompactHeader, MiniStat, Modal, SubTabs } from '../../ui/MobileUI';
+import { CompactHeader, Modal } from '../../ui/MobileUI';
 
 interface ProductionStudioProps {
   state: GameState;
   onBuyEquipment: (equipmentId: string) => ActionResult;
   onSaveRecipe: (draft: RecipeDraft) => ActionResult;
   onLaunchBatch: (draft: RecipeDraft, selectedLots?: Partial<Record<IngredientCategory, string>>) => ActionResult;
+  onTaste: (batchId: string) => ActionResult;
+  onPackage: (batchId: string) => ActionResult;
+  onDiscard: (batchId: string) => ActionResult;
   onOrderSupply: (offerId: string, quantity: number) => ActionResult;
   onSignSupplier: (supplierId: string) => ActionResult;
   onExpandRoom: (roomId: FacilityRoomId) => ActionResult;
@@ -35,194 +40,114 @@ interface ProductionStudioProps {
   onRemoveQueue: (queueId: string) => ActionResult;
 }
 
-type ProductionSection = 'facility' | 'recipe' | 'supply' | 'launch';
-type RecipeSection = 'identity' | 'profile' | 'process';
+type Workspace = 'recipe' | 'supply' | 'facility' | 'batches' | null;
 
-export function ProductionStudio({ state, onBuyEquipment, onSaveRecipe, onLaunchBatch, onOrderSupply, onSignSupplier, onExpandRoom, onExpandUtility, onCleanFacility, onServiceEquipment, onUpgradeEquipment, onQueueRecipe, onRemoveQueue }: ProductionStudioProps) {
+type RecipeStep = 1 | 2 | 3;
+
+export function ProductionStudio(props: ProductionStudioProps) {
+  const { state } = props;
+  const [workspace, setWorkspace] = useState<Workspace>(null);
   const [family, setFamily] = useState<ProductFamily>('beer');
   const [draft, setDraft] = useState<RecipeDraft>(() => createRecipeDraft('beer'));
-  const [section, setSection] = useState<ProductionSection>('facility');
-  const [recipeSection, setRecipeSection] = useState<RecipeSection>('identity');
+  const [recipeStep, setRecipeStep] = useState<RecipeStep>(1);
   const [selectedLots, setSelectedLots] = useState<Partial<Record<IngredientCategory, string>>>({});
   const [selectingCategory, setSelectingCategory] = useState<IngredientCategory | null>(null);
   const [feedback, setFeedback] = useState<ActionResult | null>(null);
+
   const style = getStyle(draft.styleId);
   const requirements = useMemo(() => getRecipeRequirements(draft), [draft]);
   const supplyPlan = useMemo(() => buildSupplyPlan(state.supply.inventory, requirements, selectedLots), [requirements, selectedLots, state.supply.inventory]);
   const processCost = estimateProcessCost(draft);
-  const estimatedCost = supplyPlan.totalCost + processCost;
   const required = requiredEquipmentIds(family);
-  const ready = required.every((id) => state.production.equipmentIds.includes(id) && (!state.facility || equipmentAvailable(state.facility, id)));
-  const activeBatches = state.production.batches.filter((batch) => !['packaged', 'discarded'].includes(batch.status)).length;
-  const propertyCapacity = state.facility ? maxActiveBatches(state.facility) : 1;
-  const styleFit = useMemo(() => calculatePreviewFit(draft), [draft]);
-  const supplyReady = supplyPlan.missing.length === 0;
+  const lineReady = required.every((id) => state.production.equipmentIds.includes(id) && (!state.facility || equipmentAvailable(state.facility, id)));
+  const active = state.production.batches.filter((batch) => !['packaged', 'discarded'].includes(batch.status));
+  const waiting = state.production.batches.filter((batch) => ['ready', 'tasted'].includes(batch.status));
+  const packaged = state.production.batches.filter((batch) => batch.status === 'packaged').reduce((sum, batch) => sum + batch.availableUnits, 0);
+  const capacity = state.facility ? maxActiveBatches(state.facility) : 1;
   const categoryRequirement = requirements.find((item) => item.category === selectingCategory) ?? null;
-  const categoryLots = categoryRequirement
-    ? state.supply.inventory.filter((lot) => lot.ingredientId === categoryRequirement.ingredientId && lot.quantity > 0)
-    : [];
+  const categoryLots = categoryRequirement ? state.supply.inventory.filter((lot) => lot.ingredientId === categoryRequirement.ingredientId && lot.quantity > 0) : [];
 
-  function switchFamily(nextFamily: ProductFamily) {
-    setFamily(nextFamily);
-    setDraft(createRecipeDraft(nextFamily));
+  function show(result: ActionResult) {
+    setFeedback(result);
+    window.setTimeout(() => setFeedback(null), 2600);
+  }
+
+  function switchFamily(next: ProductFamily) {
+    setFamily(next);
+    setDraft(createRecipeDraft(next));
     setSelectedLots({});
-    setRecipeSection('identity');
-    setFeedback(null);
+    setRecipeStep(1);
   }
 
   function update<K extends keyof RecipeDraft>(key: K, value: RecipeDraft[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
   }
 
-  function handleResult(result: ActionResult) {
-    setFeedback(result);
-    window.setTimeout(() => setFeedback(null), 3200);
-  }
-
   function launch() {
-    const result = onLaunchBatch(draft, selectedLots);
-    handleResult(result);
+    const result = props.onLaunchBatch(draft, selectedLots);
+    show(result);
     if (result.ok) {
+      setWorkspace(null);
       setDraft(createRecipeDraft(family));
       setSelectedLots({});
-      setSection('facility');
+      setRecipeStep(1);
     }
   }
 
-  return (
-    <div className="screen-stack production-compact">
-      {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
+  return <div className="screen-stack production-screen">
+    {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
+    <CompactHeader kicker="Производство" title={active.length > 0 ? `${active.length} партии в работе` : 'Производственный план пуст'} meta={`${Math.max(0, capacity - active.length)} свободных линий · ${packaged} бутылок на складе`} action={<button className="round-action" onClick={() => setWorkspace('facility')}><Icon name="factory" /></button>} />
 
-      <CompactHeader
-        kicker="Производственная студия"
-        title={family === 'beer' ? 'Пивная линия' : 'Сидровая линия'}
-        meta={`${Math.max(0, propertyCapacity - activeBatches)} свободных места · ${ready ? 'линия готова' : 'не хватает оборудования'}`}
-        action={<div className="family-toggle"><button className={family === 'beer' ? 'active' : ''} onClick={() => switchFamily('beer')}><Icon name="beer" /></button><button className={family === 'cider' ? 'active' : ''} onClick={() => switchFamily('cider')}><Icon name="apple" /></button></div>}
-      />
+    <section className="production-flow plain-panel">
+      <button onClick={() => setWorkspace('supply')}><span>1</span><div><strong>Сырьё</strong><small>{state.supply.inventory.length} лотов · {state.supply.purchaseOrders.filter((order) => ['pending','delayed'].includes(order.status)).length} в пути</small></div><Icon name="arrow" /></button>
+      <button onClick={() => { setRecipeStep(1); setWorkspace('recipe'); }}><span>2</span><div><strong>Рецепт</strong><small>{state.production.recipes.length} сохранено · пиво и сидр</small></div><Icon name="arrow" /></button>
+      <button onClick={() => setWorkspace('batches')}><span>3</span><div><strong>Партия</strong><small>{active.length} в работе · {waiting.length} ждут решения</small></div><Icon name="arrow" /></button>
+      <button onClick={() => setWorkspace('batches')}><span>4</span><div><strong>Розлив</strong><small>{packaged} бутылок готовы к торговле</small></div><Icon name="arrow" /></button>
+    </section>
 
-      <section className="mini-stat-grid three">
-        <MiniStat label="Сырьё" value={supplyReady ? `${supplyPlan.qualityScore}/100` : `${supplyPlan.missing.length} дефицита`} note={supplyReady ? formatMoney(supplyPlan.totalCost) : 'нужна закупка'} tone={supplyReady ? 'green' : 'warm'} />
-        <MiniStat label="Запуск" value={formatMoney(estimatedCost)} note={`${draft.volumeLiters} л`} tone="blue" />
-        <MiniStat label="Готовность" value={`День ${state.day + draft.primaryDays + draft.conditioningDays}`} note={`${draft.primaryDays + draft.conditioningDays} дней`} tone="green" />
-      </section>
+    <button className="primary-command" onClick={() => { setRecipeStep(1); setWorkspace('recipe'); }}><span><small>Новое производство</small><strong>Создать и запустить партию</strong></span><Icon name="arrow" /></button>
 
-      <SubTabs value={section} onChange={setSection} options={[{ id: 'facility', label: 'Цех' }, { id: 'recipe', label: 'Рецепт' }, { id: 'supply', label: 'Снабжение', badge: state.supply.purchaseOrders.filter((order) => ['pending', 'delayed'].includes(order.status)).length }, { id: 'launch', label: 'Запуск' }]} />
+    {active.length > 0 && <section className="plain-panel current-work">
+      <div className="section-heading"><span>Сейчас в работе</span><button onClick={() => setWorkspace('batches')}>Все партии</button></div>
+      {active.slice(0, 3).map((batch) => <button key={batch.id} onClick={() => setWorkspace('batches')}><span><strong>{batch.code} · {batch.recipe.name}</strong><small>{statusLabel(batch.status)} · готовность день {batch.readyDay}</small></span><b>{batch.progress}%</b></button>)}
+    </section>}
 
-      {section === 'facility' && (
-        <FacilityHub
-          state={state}
-          onBuyEquipment={onBuyEquipment}
-          onExpandRoom={onExpandRoom}
-          onExpandUtility={onExpandUtility}
-          onClean={onCleanFacility}
-          onServiceEquipment={onServiceEquipment}
-          onUpgradeEquipment={onUpgradeEquipment}
-          onQueueRecipe={onQueueRecipe}
-          onRemoveQueue={onRemoveQueue}
-        />
-      )}
+    <button className="secondary-command" onClick={() => setWorkspace('facility')}><Icon name="factory" /><span><strong>Объект и оборудование</strong><small>Чистота {Math.round(state.facility?.sanitation ?? 0)} · {state.production.equipmentIds.length} модулей</small></span><Icon name="arrow" /></button>
 
-      {section === 'recipe' && (
-        <section className="recipe-workspace glass-card">
-          <SubTabs value={recipeSection} onChange={setRecipeSection} options={[{ id: 'identity', label: 'Основа' }, { id: 'profile', label: 'Вкус' }, { id: 'process', label: 'Процесс' }]} />
+    {workspace === 'recipe' && <Modal title="Новая партия" kicker={`Шаг ${recipeStep} из 3`} onClose={() => setWorkspace(null)} wide footer={<div className="wizard-footer">{recipeStep > 1 && <button className="button secondary" onClick={() => setRecipeStep((recipeStep - 1) as RecipeStep)}>Назад</button>}{recipeStep < 3 ? <button className="button primary" onClick={() => setRecipeStep((recipeStep + 1) as RecipeStep)}>Дальше</button> : <button className="button primary" disabled={!lineReady || supplyPlan.missing.length > 0 || state.finance.cash < processCost} onClick={launch}>Запустить · {formatMoney(supplyPlan.totalCost + processCost)}</button>}</div>}>
+      <div className="wizard-steps"><i className={recipeStep >= 1 ? 'active' : ''} /><i className={recipeStep >= 2 ? 'active' : ''} /><i className={recipeStep >= 3 ? 'active' : ''} /></div>
+      {recipeStep === 1 && <div className="wizard-pane">
+        <div className="family-choice"><button className={family === 'beer' ? 'active' : ''} onClick={() => switchFamily('beer')}><Icon name="beer" />Пиво</button><button className={family === 'cider' ? 'active' : ''} onClick={() => switchFamily('cider')}><Icon name="apple" />Сидр</button></div>
+        <label className="field"><span>Название рецепта</span><input value={draft.name} onChange={(event) => update('name', event.target.value)} maxLength={36} /></label>
+        <div className="select-list">{getStylesForFamily(family).map((item) => <button key={item.id} className={draft.styleId === item.id ? 'active' : ''} onClick={() => { setDraft((current) => adaptDraftToStyle(current, item.id)); setSelectedLots({}); }}><span><strong>{item.shortName}</strong><small>{item.description}</small></span>{draft.styleId === item.id && <Icon name="check" />}</button>)}</div>
+      </div>}
+      {recipeStep === 2 && <div className="wizard-pane compact-controls">
+        <RangeControl label="Сладость" value={draft.sweetness} min={1} max={5} onChange={(value) => update('sweetness', value)} />
+        <RangeControl label="Кислотность" value={draft.acidity} min={1} max={5} onChange={(value) => update('acidity', value)} />
+        <RangeControl label="Горечь / танины" value={draft.bitterness} min={1} max={5} onChange={(value) => update('bitterness', value)} />
+        <RangeControl label="Тело" value={draft.body} min={1} max={5} onChange={(value) => update('body', value)} />
+        <RangeControl label="Ароматика" value={draft.aroma} min={1} max={5} onChange={(value) => update('aroma', value)} />
+        <RangeControl label="Оригинальность" value={draft.originality} min={1} max={5} onChange={(value) => update('originality', value)} />
+      </div>}
+      {recipeStep === 3 && <div className="wizard-pane">
+        <div className="compact-controls"><RangeControl label="Объём" value={draft.volumeLiters} min={40} max={240} step={10} suffix=" л" onChange={(value) => { update('volumeLiters', value); setSelectedLots({}); }} /><RangeControl label="Температура" value={draft.processTemperature} min={style.processTemperatureRange[0]} max={style.processTemperatureRange[1]} suffix="°C" onChange={(value) => update('processTemperature', value)} /><RangeControl label="Основной этап" value={draft.primaryDays} min={style.primaryDaysRange[0]} max={style.primaryDaysRange[1]} suffix=" дн." onChange={(value) => update('primaryDays', value)} /><RangeControl label="Созревание" value={draft.conditioningDays} min={style.conditioningDaysRange[0]} max={style.conditioningDaysRange[1]} suffix=" дн." onChange={(value) => update('conditioningDays', value)} /></div>
+        <div className="material-summary"><div><span>Сырьё</span><strong>{supplyPlan.missing.length === 0 ? `${supplyPlan.qualityScore}/100` : `${supplyPlan.missing.length} позиций не хватает`}</strong></div>{requirements.map((requirement) => { const uses = supplyPlan.uses.filter((use) => use.ingredientId === requirement.ingredientId); return <button key={requirement.category} className={supplyPlan.missing.some((item) => item.ingredientId === requirement.ingredientId) ? 'missing' : ''} onClick={() => setSelectingCategory(requirement.category)}><span><strong>{requirement.label}</strong><small>{uses.map((use) => use.variantName).join(' + ') || 'нет на складе'}</small></span><b>{formatQuantity(requirement.quantity, requirement.unit)}</b></button>; })}</div>
+        {!lineReady && <div className="inline-warning"><Icon name="warning" /><span>Линия не готова. Закрой окно и проверь объект.</span></div>}
+        {supplyPlan.missing.length > 0 && <div className="inline-warning"><Icon name="warning" /><span>Не хватает сырья. Закрой окно и открой снабжение.</span></div>}
+        <button className="button secondary full-button" onClick={() => show(props.onSaveRecipe(draft))}>Сохранить рецепт</button>
+      </div>}
+    </Modal>}
 
-          {recipeSection === 'identity' && (
-            <div className="recipe-pane">
-              <label className="field rich-field"><span>Название рецепта</span><input value={draft.name} onChange={(event) => update('name', event.target.value)} maxLength={36} /></label>
-              <div className="compact-style-list">
-                {getStylesForFamily(family).map((item) => (
-                  <button key={item.id} className={draft.styleId === item.id ? 'active' : ''} onClick={() => { setDraft((current) => adaptDraftToStyle(current, item.id)); setSelectedLots({}); }}>
-                    <i style={{ background: item.color }} />
-                    <span><strong>{item.shortName}</strong><small>{item.description}</small></span>
-                    {draft.styleId === item.id && <Icon name="check" />}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+    {workspace === 'supply' && <Modal title="Сырьё и поставщики" kicker="Снабжение" onClose={() => setWorkspace(null)} wide><SupplyHub state={state} onOrder={props.onOrderSupply} onSignSupplier={props.onSignSupplier} /></Modal>}
+    {workspace === 'facility' && <Modal title="Объект и оборудование" kicker="Производственная база" onClose={() => setWorkspace(null)} wide><FacilityHub state={state} onBuyEquipment={props.onBuyEquipment} onExpandRoom={props.onExpandRoom} onExpandUtility={props.onExpandUtility} onClean={props.onCleanFacility} onServiceEquipment={props.onServiceEquipment} onUpgradeEquipment={props.onUpgradeEquipment} onQueueRecipe={props.onQueueRecipe} onRemoveQueue={props.onRemoveQueue} /></Modal>}
+    {workspace === 'batches' && <Modal title="Партии" kicker="Производственный журнал" onClose={() => setWorkspace(null)} wide><BatchBoard state={state} onTaste={props.onTaste} onPackage={props.onPackage} onDiscard={props.onDiscard} onOpenProduction={() => { setWorkspace('recipe'); setRecipeStep(1); }} /></Modal>}
 
-          {recipeSection === 'profile' && (
-            <div className="recipe-pane compact-controls">
-              <RangeControl label="Сладость" value={draft.sweetness} min={1} max={5} onChange={(value) => update('sweetness', value)} />
-              <RangeControl label="Кислотность" value={draft.acidity} min={1} max={5} onChange={(value) => update('acidity', value)} />
-              <RangeControl label="Горечь / танины" value={draft.bitterness} min={1} max={5} onChange={(value) => update('bitterness', value)} />
-              <RangeControl label="Тело" value={draft.body} min={1} max={5} onChange={(value) => update('body', value)} />
-              <RangeControl label="Ароматика" value={draft.aroma} min={1} max={5} onChange={(value) => update('aroma', value)} />
-              <RangeControl label="Оригинальность" value={draft.originality} min={1} max={5} onChange={(value) => update('originality', value)} />
-            </div>
-          )}
-
-          {recipeSection === 'process' && (
-            <div className="recipe-pane compact-controls">
-              <RangeControl label="Объём" value={draft.volumeLiters} min={40} max={240} step={10} suffix=" л" onChange={(value) => { update('volumeLiters', value); setSelectedLots({}); }} />
-              <RangeControl label="Температура" value={draft.processTemperature} min={style.processTemperatureRange[0]} max={style.processTemperatureRange[1]} suffix="°C" onChange={(value) => update('processTemperature', value)} />
-              <RangeControl label="Основной этап" value={draft.primaryDays} min={style.primaryDaysRange[0]} max={style.primaryDaysRange[1]} suffix=" дн." onChange={(value) => update('primaryDays', value)} />
-              <RangeControl label="Созревание" value={draft.conditioningDays} min={style.conditioningDaysRange[0]} max={style.conditioningDaysRange[1]} suffix=" дн." onChange={(value) => update('conditioningDays', value)} />
-              <RangeControl label="Контроль и обработка" value={draft.treatment} min={1} max={5} onChange={(value) => update('treatment', value)} />
-            </div>
-          )}
-        </section>
-      )}
-
-      {section === 'supply' && <SupplyHub state={state} onOrder={onOrderSupply} onSignSupplier={onSignSupplier} />}
-
-      {section === 'launch' && (
-        <section className="launch-card glass-card">
-          <div className="launch-visual" style={{ '--drink-color': style.color } as React.CSSProperties}><div><i /><i /><i /></div><span>{family === 'beer' ? 'BEER' : 'CIDER'}</span></div>
-          <div className="launch-copy"><span>{style.name}</span><h3>{draft.name || 'Без названия'}</h3><p>{draft.volumeLiters} л · {draft.primaryDays + draft.conditioningDays} дней · {styleFit}% попадание в стиль</p></div>
-
-          <div className="material-plan">
-            <div className="material-plan-head"><span>Сырьё партии</span><strong>{supplyReady ? `${supplyPlan.qualityScore}/100` : 'не готово'}</strong></div>
-            {requirements.map((requirement) => {
-              const uses = supplyPlan.uses.filter((use) => use.ingredientId === requirement.ingredientId);
-              const missing = supplyPlan.missing.find((item) => item.ingredientId === requirement.ingredientId);
-              const selected = selectedLots[requirement.category];
-              return (
-                <button key={requirement.category} className={`material-row ${missing ? 'missing' : ''}`} onClick={() => setSelectingCategory(requirement.category)}>
-                  <span><strong>{requirement.label}</strong><small>{uses.length > 0 ? uses.map((use) => use.variantName).join(' + ') : 'нет подходящего лота'}</small></span>
-                  <span><b>{formatQuantity(requirement.quantity, requirement.unit)}</b><small>{selected ? 'выбрано' : 'авто'}</small></span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="launch-numbers">
-            <div><span>Сырьё</span><strong>{formatMoney(supplyPlan.totalCost)}</strong></div>
-            <div><span>Процесс</span><strong>{formatMoney(processCost)}</strong></div>
-            <div><span>Итого</span><strong>{formatMoney(estimatedCost)}</strong></div>
-          </div>
-          {!ready && <div className="inline-warning"><Icon name="warning" /><span>Сначала собери обязательную линию во вкладке «Линия».</span></div>}
-          {!supplyReady && <div className="inline-warning"><Icon name="warning" /><span>Не хватает сырья. Перейди в «Снабжение» и оформи закупку.</span></div>}
-          <div className="stacked-actions">
-            <button className="button secondary" onClick={() => handleResult(onSaveRecipe(draft))}>Сохранить версию</button>
-            <button className="button primary glow" onClick={launch} disabled={!ready || !supplyReady || state.finance.cash < processCost}>Запустить партию <Icon name="arrow" /></button>
-          </div>
-        </section>
-      )}
-
-      {selectingCategory && categoryRequirement && (
-        <Modal title={categoryRequirement.label} kicker={`Нужно ${formatQuantity(categoryRequirement.quantity, categoryRequirement.unit)}`} onClose={() => setSelectingCategory(null)} footer={<button className="button secondary" onClick={() => { setSelectedLots((current) => { const next = { ...current }; delete next[selectingCategory]; return next; }); setSelectingCategory(null); }}>Автовыбор по сроку</button>}>
-          {categoryLots.length === 0 ? <p className="modal-description">На складе нет подходящих лотов. Оформи заказ во вкладке «Снабжение».</p> : <div className="lot-choice-list">{categoryLots.map((lot) => <button key={lot.id} className={selectedLots[selectingCategory] === lot.id ? 'active' : ''} onClick={() => { setSelectedLots((current) => ({ ...current, [selectingCategory]: lot.id })); setSelectingCategory(null); }}><span><strong>{lot.variantName}</strong><small>{lot.origin} · {formatQuantity(lot.quantity, lot.unit)}</small></span><span><b>{lot.quality}/100</b><small>{lot.unitCost.toFixed(2)} / {getIngredient(lot.ingredientId).unit === 'kg' ? 'кг' : getIngredient(lot.ingredientId).unit === 'pack' ? 'уп.' : 'шт.'}</small></span></button>)}</div>}
-        </Modal>
-      )}
-    </div>
-  );
+    {selectingCategory && categoryRequirement && <Modal title={categoryRequirement.label} kicker={`Нужно ${formatQuantity(categoryRequirement.quantity, categoryRequirement.unit)}`} onClose={() => setSelectingCategory(null)}>{categoryLots.length === 0 ? <p className="quiet-copy">На складе нет подходящих лотов.</p> : <div className="select-list">{categoryLots.map((lot) => <button key={lot.id} className={selectedLots[selectingCategory] === lot.id ? 'active' : ''} onClick={() => { setSelectedLots((current) => ({ ...current, [selectingCategory]: lot.id })); setSelectingCategory(null); }}><span><strong>{lot.variantName}</strong><small>{lot.origin} · {formatQuantity(lot.quantity, lot.unit)}</small></span><b>{lot.quality}/100</b></button>)}</div>}<button className="button secondary full-button" onClick={() => { setSelectedLots((current) => { const next = { ...current }; delete next[selectingCategory]; return next; }); setSelectingCategory(null); }}>Автовыбор</button></Modal>}
+  </div>;
 }
 
 function RangeControl({ label, value, min, max, step = 1, suffix = '', onChange }: { label: string; value: number; min: number; max: number; step?: number; suffix?: string; onChange: (value: number) => void }) {
   const progress = ((value - min) / Math.max(1, max - min)) * 100;
   return <label className="compact-range"><div><span>{label}</span><output>{value}{suffix}</output></div><input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} style={{ '--range-progress': `${progress}%` } as React.CSSProperties} /></label>;
 }
-
-function calculatePreviewFit(draft: RecipeDraft): number {
-  const style = getStyle(draft.styleId);
-  const values = [draft.sweetness, draft.acidity, draft.bitterness, draft.body, draft.aroma];
-  const targets = [style.target.sweetness, style.target.acidity, style.target.bitterness, style.target.body, style.target.aroma];
-  const distance = values.reduce((sum, value, index) => sum + Math.abs(value - (targets[index] ?? 0)), 0);
-  const temperaturePenalty = Math.abs(draft.processTemperature - style.defaultProcessTemperature) * 3;
-  return Math.max(15, Math.round(100 - distance * 5 - temperaturePenalty));
-}
-
-function formatMoney(value: number): string {
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value);
-}
+function formatMoney(value: number): string { return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value); }
