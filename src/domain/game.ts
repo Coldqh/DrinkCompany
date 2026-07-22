@@ -88,18 +88,20 @@ import {
   type Workload,
 } from './team';
 import {
-  advanceRetailDay,
-  cleanRetailVenue,
-  createRetailState,
-  openRetailVenue,
-  retailDailyCost,
-  setRetailVenueStatus,
-  stockRetailVenue,
-  upgradeRetailVenue,
-  type RetailState,
-  type RetailVenueStatus,
-  type RetailVenueType,
-} from './retail';
+  acquireAsset,
+  advanceEcosystemDay,
+  cleanControlledVenue,
+  createEcosystemState,
+  ecosystemPlayerDailyCost,
+  investInOrganization,
+  leaseVacantAsset,
+  migrateRetailIntoEcosystem,
+  setControlledVenueStatus,
+  stockControlledVenue,
+  upgradeControlledVenue,
+  type EcosystemState,
+} from './ecosystem';
+import type { RetailState, RetailVenueStatus, RetailVenueType } from './retail';
 import {
   batchConsistency,
   createConsumerReview,
@@ -239,7 +241,7 @@ export interface TutorialState {
 }
 
 export interface GameState {
-  schemaVersion: 9;
+  schemaVersion: 10;
   phase: GamePhase;
   mode: GameMode;
   day: number;
@@ -251,7 +253,7 @@ export interface GameState {
   facility: FacilityState | null;
   brand: BrandState;
   team: TeamState;
-  retail: RetailState;
+  ecosystem: EcosystemState | null;
   tutorial: TutorialState;
   discoveredProductFamilies: ProductFamily[];
   createdAt: string;
@@ -273,32 +275,38 @@ export interface LegacyGameStateV1 {
 
 
 
-export interface LegacyGameStateV8 extends Omit<GameState, 'schemaVersion' | 'retail'> {
+export interface LegacyGameStateV9 extends Omit<GameState, 'schemaVersion' | 'ecosystem'> {
+  schemaVersion: 9;
+  retail?: RetailState;
+  ecosystem?: EcosystemState | null;
+}
+
+export interface LegacyGameStateV8 extends Omit<GameState, 'schemaVersion' | 'ecosystem'> {
   schemaVersion: 8;
   retail?: RetailState;
 }
 
-export interface LegacyGameStateV7 extends Omit<GameState, 'schemaVersion' | 'team' | 'retail'> {
+export interface LegacyGameStateV7 extends Omit<GameState, 'schemaVersion' | 'team' | 'ecosystem'> {
   schemaVersion: 7;
   team?: TeamState;
 }
 
-export interface LegacyGameStateV6 extends Omit<GameState, 'schemaVersion' | 'brand' | 'team' | 'retail'> {
+export interface LegacyGameStateV6 extends Omit<GameState, 'schemaVersion' | 'brand' | 'team' | 'ecosystem'> {
   schemaVersion: 6;
   brand?: BrandState;
 }
 
-export interface LegacyGameStateV5 extends Omit<GameState, 'schemaVersion' | 'facility' | 'brand' | 'team' | 'retail'> {
+export interface LegacyGameStateV5 extends Omit<GameState, 'schemaVersion' | 'facility' | 'brand' | 'team' | 'ecosystem'> {
   schemaVersion: 5;
   facility?: FacilityState | null;
 }
 
-export interface LegacyGameStateV4 extends Omit<GameState, 'schemaVersion' | 'supply' | 'brand' | 'team' | 'retail'> {
+export interface LegacyGameStateV4 extends Omit<GameState, 'schemaVersion' | 'supply' | 'brand' | 'team' | 'ecosystem'> {
   schemaVersion: 4;
   supply?: SupplyState;
 }
 
-export interface LegacyGameStateV3 extends Omit<GameState, 'schemaVersion' | 'world' | 'brand' | 'team' | 'retail'> {
+export interface LegacyGameStateV3 extends Omit<GameState, 'schemaVersion' | 'world' | 'brand' | 'team' | 'ecosystem'> {
   schemaVersion: 3;
   world: (Omit<WorldState, 'repeatOrders' | 'reviews' | 'demandSignals' | 'releases' | 'nextRepeatOrderNumber'> & Partial<Pick<WorldState, 'repeatOrders' | 'reviews' | 'demandSignals' | 'releases' | 'nextRepeatOrderNumber'>>) | null;
 }
@@ -342,7 +350,7 @@ export const STARTING_CASH: Record<GameMode, number> = {
 export function createInitialState(now = new Date()): GameState {
   const timestamp = now.toISOString();
   return {
-    schemaVersion: 9,
+    schemaVersion: 10,
     phase: 'onboarding',
     mode: 'standard',
     day: 1,
@@ -354,7 +362,7 @@ export function createInitialState(now = new Date()): GameState {
     facility: null,
     brand: createBrandState(),
     team: createTeamState(1),
-    retail: createRetailState(),
+    ecosystem: null,
     tutorial: { dismissed: false, completedSteps: [] },
     discoveredProductFamilies: ['beer', 'cider'],
     createdAt: timestamp,
@@ -373,20 +381,33 @@ export function startCompany(selection: NewGameSelection, now = new Date()): Gam
 
   const timestamp = now.toISOString();
   const facility = createFacilityState({ ...selection.property, propertyDailyCost: selection.property.dailyCost }, 1);
+  const world = createWorldState(selection.countryId, selection.regionId, selection.property.id);
+  const ecosystem = createEcosystemState({
+    playerCompanyName: companyName,
+    countryId: selection.countryId,
+    regionId: selection.regionId,
+    propertyName: selection.property.name,
+    propertyId: selection.property.id,
+    propertyDailyCost: selection.property.dailyCost,
+    propertyOwned: selection.property.acquisition === 'buy',
+    companies: world.companies,
+    outlets: world.outlets,
+    day: 1,
+  });
   return {
-    schemaVersion: 9,
+    schemaVersion: 10,
     phase: 'operating',
     mode: selection.mode,
     day: 1,
     company: { name: companyName, reputation: 0, completedBatches: 0 },
-    world: createWorldState(selection.countryId, selection.regionId, selection.property.id),
+    world,
     finance: createFinance(startingCash - selection.property.upfrontCost, facilityDailyCost(facility)),
     production: createProductionState(),
     supply: createSupplyState(1),
     facility,
     brand: createBrandState(),
     team: createTeamState(1),
-    retail: createRetailState(),
+    ecosystem,
     tutorial: { dismissed: false, completedSteps: [] },
     discoveredProductFamilies: ['beer', 'cider'],
     createdAt: timestamp,
@@ -532,6 +553,7 @@ export function submitMarketProposal(state: GameState, input: ProposalInput, now
   ensureOperating(state);
   if (!state.world) throw new Error('Рынок недоступен');
   const outlet = getOutlet(state.world, input.outletId);
+  if (outlet.controlledByPlayer) throw new Error('Эта точка уже принадлежит твоей компании и не является внешним покупателем');
   const batch = getBatch(state, input.batchId);
   if (batch.status !== 'packaged') throw new Error('Предлагать рынку можно только разлитую партию');
   const sampleUnits = input.contactMode === 'meeting' ? 1 : 2;
@@ -800,7 +822,7 @@ export function expandFacilityRoom(state: GameState, roomId: FacilityRoomId, now
   const cost = roomUpgradeCost(state.facility, roomId);
   if (state.finance.cash < cost) throw new Error('Недостаточно денег на расширение помещения');
   const facility = upgradeRoom(state.facility, roomId, state.day);
-  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), facilitySpend: roundMoney(state.finance.facilitySpend + cost) }, facility, state.team, state.retail) }, now);
+  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), facilitySpend: roundMoney(state.finance.facilitySpend + cost) }, facility, state.team, state.ecosystem) }, now);
 }
 
 export function expandFacilityUtility(state: GameState, utilityId: FacilityUtilityId, now = new Date()): GameState {
@@ -809,7 +831,7 @@ export function expandFacilityUtility(state: GameState, utilityId: FacilityUtili
   const cost = utilityUpgradeCost(state.facility, utilityId);
   if (state.finance.cash < cost) throw new Error('Недостаточно денег на инфраструктуру');
   const facility = upgradeUtility(state.facility, utilityId, state.day);
-  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), facilitySpend: roundMoney(state.finance.facilitySpend + cost) }, facility, state.team, state.retail) }, now);
+  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), facilitySpend: roundMoney(state.finance.facilitySpend + cost) }, facility, state.team, state.ecosystem) }, now);
 }
 
 export function cleanProductionFacility(state: GameState, now = new Date()): GameState {
@@ -818,7 +840,7 @@ export function cleanProductionFacility(state: GameState, now = new Date()): Gam
   const cost = cleaningCost(state.facility);
   if (state.finance.cash < cost) throw new Error('Недостаточно денег на санитарную смену');
   const facility = cleanFacility(state.facility, state.day);
-  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), maintenanceSpend: roundMoney(state.finance.maintenanceSpend + cost) }, facility, state.team, state.retail) }, now);
+  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), maintenanceSpend: roundMoney(state.finance.maintenanceSpend + cost) }, facility, state.team, state.ecosystem) }, now);
 }
 
 export function serviceProductionEquipment(state: GameState, equipment: EquipmentDefinition, now = new Date()): GameState {
@@ -827,7 +849,7 @@ export function serviceProductionEquipment(state: GameState, equipment: Equipmen
   const cost = equipmentServiceCost(state.facility, equipment);
   if (state.finance.cash < cost) throw new Error('Недостаточно денег на обслуживание');
   const facility = serviceEquipment(state.facility, equipment, state.day);
-  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), maintenanceSpend: roundMoney(state.finance.maintenanceSpend + cost) }, facility, state.team, state.retail) }, now);
+  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), maintenanceSpend: roundMoney(state.finance.maintenanceSpend + cost) }, facility, state.team, state.ecosystem) }, now);
 }
 
 export function upgradeProductionEquipment(state: GameState, equipment: EquipmentDefinition, now = new Date()): GameState {
@@ -836,7 +858,7 @@ export function upgradeProductionEquipment(state: GameState, equipment: Equipmen
   const cost = equipmentUpgradeCost(state.facility, equipment);
   if (state.finance.cash < cost) throw new Error('Недостаточно денег на модернизацию');
   const facility = modernizeEquipment(state.facility, equipment, state.day);
-  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), facilitySpend: roundMoney(state.finance.facilitySpend + cost) }, facility, state.team, state.retail) }, now);
+  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), facilitySpend: roundMoney(state.finance.facilitySpend + cost) }, facility, state.team, state.ecosystem) }, now);
 }
 
 export function queueProductionRecipe(state: GameState, recipeId: string, now = new Date()): GameState {
@@ -897,7 +919,7 @@ export function hireTeamCandidate(state: GameState, candidateId: string, now = n
   return touch({
     ...state,
     team: result.team,
-    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), teamSpend: roundMoney(state.finance.teamSpend + result.cost), dailyFixedCost: roundMoney((state.facility ? facilityDailyCost(state.facility) : state.finance.dailyFixedCost) + dailyPayroll(result.team) + retailDailyCost(state.retail)) },
+    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), teamSpend: roundMoney(state.finance.teamSpend + result.cost), dailyFixedCost: calculateDailyFixedCost(state.facility, result.team, state.ecosystem) },
   }, now);
 }
 
@@ -908,7 +930,7 @@ export function fireTeamEmployee(state: GameState, employeeId: string, now = new
   return touch({
     ...state,
     team: result.team,
-    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), teamSpend: roundMoney(state.finance.teamSpend + result.cost), dailyFixedCost: roundMoney((state.facility ? facilityDailyCost(state.facility) : state.finance.dailyFixedCost) + dailyPayroll(result.team) + retailDailyCost(state.retail)) },
+    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), teamSpend: roundMoney(state.finance.teamSpend + result.cost), dailyFixedCost: calculateDailyFixedCost(state.facility, result.team, state.ecosystem) },
   }, now);
 }
 
@@ -943,66 +965,97 @@ export function trainTeamEmployee(state: GameState, employeeId: string, track: T
   }, now);
 }
 
-export function openPlayerRetailVenue(state: GameState, input: { type: RetailVenueType; name: string }, now = new Date()): GameState {
+export function acquireWorldAsset(state: GameState, assetId: string, now = new Date()): GameState {
   ensureOperating(state);
-  if (!state.world) throw new Error('Регион компании не найден');
-  const result = openRetailVenue(state.retail, { ...input, regionId: state.world.regionId }, state.day);
-  if (state.finance.cash < result.cost) throw new Error('Недостаточно денег на открытие точки');
+  if (!state.ecosystem) throw new Error('Экосистема мира не инициализирована');
+  const result = acquireAsset(state.ecosystem, assetId, state.finance.cash, state.day);
   return touch({
     ...state,
-    retail: result.retail,
+    ecosystem: result.ecosystem,
+    world: markAcquiredOutlet(state.world, assetId, result.ecosystem, state.day),
     finance: {
       ...state.finance,
       cash: roundMoney(state.finance.cash - result.cost),
       retailSpend: roundMoney(state.finance.retailSpend + result.cost),
-      dailyFixedCost: roundMoney((state.facility ? facilityDailyCost(state.facility) : 0) + dailyPayroll(state.team) + retailDailyCost(result.retail)),
+      dailyFixedCost: calculateDailyFixedCost(state.facility, state.team, result.ecosystem),
     },
   }, now);
 }
 
-export function stockPlayerRetailVenue(state: GameState, venueId: string, releaseId: string, units: number, price: number, now = new Date()): GameState {
+export function leaseWorldAsset(state: GameState, assetId: string, type: RetailVenueType, name: string, now = new Date()): GameState {
   ensureOperating(state);
-  const release = state.brand.releases.find((item) => item.id === releaseId && item.status === 'active');
-  if (!release) throw new Error('Активный релиз не найден');
-  const batch = getBatch(state, release.batchId);
-  const result = stockRetailVenue(state.retail, venueId, release, batch, units, price, state.day);
-  return touch({ ...state, retail: result.retail, production: replaceBatch(state.production, result.batch) }, now);
-}
-
-export function cleanPlayerRetailVenue(state: GameState, venueId: string, now = new Date()): GameState {
-  ensureOperating(state);
-  const result = cleanRetailVenue(state.retail, venueId);
-  if (state.finance.cash < result.cost) throw new Error('Недостаточно денег на санитарную смену');
+  if (!state.ecosystem) throw new Error('Экосистема мира не инициализирована');
+  const result = leaseVacantAsset(state.ecosystem, assetId, { type, name }, state.finance.cash, state.day);
   return touch({
     ...state,
-    retail: result.retail,
+    ecosystem: result.ecosystem,
+    finance: {
+      ...state.finance,
+      cash: roundMoney(state.finance.cash - result.cost),
+      retailSpend: roundMoney(state.finance.retailSpend + result.cost),
+      dailyFixedCost: calculateDailyFixedCost(state.facility, state.team, result.ecosystem),
+    },
+  }, now);
+}
+
+export function investWorldOrganization(state: GameState, organizationId: string, share: number, now = new Date()): GameState {
+  ensureOperating(state);
+  if (!state.ecosystem) throw new Error('Экосистема мира не инициализирована');
+  const result = investInOrganization(state.ecosystem, organizationId, share, state.finance.cash, state.day);
+  return touch({
+    ...state,
+    ecosystem: result.ecosystem,
     finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), retailSpend: roundMoney(state.finance.retailSpend + result.cost) },
   }, now);
 }
 
-export function upgradePlayerRetailVenue(state: GameState, venueId: string, now = new Date()): GameState {
+export function stockWorldVenue(state: GameState, assetId: string, releaseId: string, units: number, price: number, now = new Date()): GameState {
   ensureOperating(state);
-  const result = upgradeRetailVenue(state.retail, venueId);
-  if (state.finance.cash < result.cost) throw new Error('Недостаточно денег на расширение точки');
+  if (!state.ecosystem) throw new Error('Экосистема мира не инициализирована');
+  const release = state.brand.releases.find((item) => item.id === releaseId && item.status === 'active');
+  if (!release) throw new Error('Активный релиз не найден');
+  const batch = getBatch(state, release.batchId);
+  const result = stockControlledVenue(state.ecosystem, assetId, release, batch, units, price, state.day);
+  return touch({ ...state, ecosystem: result.ecosystem, production: replaceBatch(state.production, result.batch) }, now);
+}
+
+export function cleanWorldVenue(state: GameState, assetId: string, now = new Date()): GameState {
+  ensureOperating(state);
+  if (!state.ecosystem) throw new Error('Экосистема мира не инициализирована');
+  const result = cleanControlledVenue(state.ecosystem, assetId);
+  if (state.finance.cash < result.cost) throw new Error('Недостаточно денег на санитарную смену');
   return touch({
     ...state,
-    retail: result.retail,
+    ecosystem: result.ecosystem,
+    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), retailSpend: roundMoney(state.finance.retailSpend + result.cost) },
+  }, now);
+}
+
+export function upgradeWorldVenue(state: GameState, assetId: string, now = new Date()): GameState {
+  ensureOperating(state);
+  if (!state.ecosystem) throw new Error('Экосистема мира не инициализирована');
+  const result = upgradeControlledVenue(state.ecosystem, assetId);
+  if (state.finance.cash < result.cost) throw new Error('Недостаточно денег на расширение объекта');
+  return touch({
+    ...state,
+    ecosystem: result.ecosystem,
     finance: {
       ...state.finance,
       cash: roundMoney(state.finance.cash - result.cost),
       retailSpend: roundMoney(state.finance.retailSpend + result.cost),
-      dailyFixedCost: roundMoney((state.facility ? facilityDailyCost(state.facility) : 0) + dailyPayroll(state.team) + retailDailyCost(result.retail)),
+      dailyFixedCost: calculateDailyFixedCost(state.facility, state.team, result.ecosystem),
     },
   }, now);
 }
 
-export function setPlayerRetailVenueStatus(state: GameState, venueId: string, status: RetailVenueStatus, now = new Date()): GameState {
+export function setWorldVenueStatus(state: GameState, assetId: string, status: RetailVenueStatus, now = new Date()): GameState {
   ensureOperating(state);
-  const retail = setRetailVenueStatus(state.retail, venueId, status);
+  if (!state.ecosystem) throw new Error('Экосистема мира не инициализирована');
+  const ecosystem = setControlledVenueStatus(state.ecosystem, assetId, status);
   return touch({
     ...state,
-    retail,
-    finance: { ...state.finance, dailyFixedCost: roundMoney((state.facility ? facilityDailyCost(state.facility) : 0) + dailyPayroll(state.team) + retailDailyCost(retail)) },
+    ecosystem,
+    finance: { ...state.finance, dailyFixedCost: calculateDailyFixedCost(state.facility, state.team, ecosystem) },
   }, now);
 }
 
@@ -1020,32 +1073,33 @@ export function advanceDay(state: GameState, now = new Date()): GameState {
   const facility = facilityAdvance?.facility && state.facility
     ? applyTeamSupportToFacility(state.facility, facilityAdvance.facility, workforce.wearReduction * (teamAdvance.team.automation.maintenance ? 1 : 0.35), workforce.sanitationSupport * (teamAdvance.team.automation.cleaning ? 1 : 0.35))
     : state.facility;
-  const facilityCost = facility ? facilityDailyCost(facility) : state.finance.dailyFixedCost;
-  const retailCost = retailDailyCost(state.retail);
-  const dailyFixedCost = roundMoney(facilityCost + teamAdvance.payroll + retailCost);
   const batches = state.production.batches.map((batch) => advanceBatch(batch, nextDay));
   const supplyAdvance = advanceSupplyDay(state.supply, nextDay);
   const brand = advanceBrandDay(state.brand, nextDay);
-  const retailAdvance = advanceRetailDay(state.retail, brand, batches, nextDay, workforce.salesSkill + workforce.marketingSkill);
-  const retailBookValue = retailAdvance.reports.reduce((sum, report) => sum + report.lines.reduce((lineSum, line) => { const batch = batches.find((item) => item.id === line.batchId); return lineSum + (batch ? unitBookValue(batch) * line.units : 0); }, 0), 0);
-  const nextCash = roundMoney(state.finance.cash - dailyFixedCost + retailAdvance.revenue);
+  const ecosystemAdvance = state.ecosystem
+    ? advanceEcosystemDay(state.ecosystem, brand, batches, nextDay, workforce.salesSkill + workforce.marketingSkill)
+    : null;
+  const directReports = ecosystemAdvance?.reports ?? [];
+  const directBookValue = directReports.reduce((sum, report) => sum + report.lines.reduce((lineSum, line) => {
+    const batch = batches.find((item) => item.id === line.batchId);
+    return lineSum + (batch ? unitBookValue(batch) * line.units : 0);
+  }, 0), 0);
+  const ecosystem = ecosystemAdvance?.ecosystem ?? state.ecosystem;
+  const dailyFixedCost = calculateDailyFixedCost(facility, teamAdvance.team, ecosystem);
+  const directRevenue = ecosystemAdvance?.playerRevenue ?? 0;
+  const nextCash = roundMoney(state.finance.cash - dailyFixedCost + directRevenue);
   let world = state.world ? advanceWorld(state.world, batches, state.company.reputation, nextDay, brand, workforce.salesSkill) : null;
-  if (world && supplyAdvance.events.length > 0) {
+  if (world && ecosystem) world = syncWorldFromEcosystem(world, ecosystem);
+  const externalEvents = [
+    ...supplyAdvance.events,
+    ...(facilityAdvance?.incidents.map((event) => ({ title: event.title, detail: event.detail, tone: event.tone === 'warning' ? 'warning' as const : 'market' as const })) ?? []),
+    ...teamAdvance.events.map((event) => ({ title: event.title, detail: event.detail, tone: event.tone === 'warning' ? 'warning' as const : 'market' as const })),
+    ...(ecosystemAdvance?.events ?? []),
+  ];
+  if (world && externalEvents.length > 0) {
     world = {
       ...world,
-      pulse: [...supplyAdvance.events.map((event, index) => ({ id: `pulse-${nextDay}-supply-${index}`, day: nextDay, ...event })), ...world.pulse].slice(0, 12),
-    };
-  }
-  if (world && facilityAdvance && facilityAdvance.incidents.length > 0) {
-    world = {
-      ...world,
-      pulse: [...facilityAdvance.incidents.map((event) => ({ id: event.id, day: nextDay, tone: event.tone === 'warning' ? 'warning' as const : 'market' as const, title: event.title, detail: event.detail })), ...world.pulse].slice(0, 12),
-    };
-  }
-  if (world && teamAdvance.events.length > 0) {
-    world = {
-      ...world,
-      pulse: [...teamAdvance.events.map((event) => ({ id: event.id, day: nextDay, tone: event.tone === 'warning' ? 'warning' as const : 'market' as const, title: event.title, detail: event.detail })), ...world.pulse].slice(0, 12),
+      pulse: [...externalEvents.map((event, index) => ({ id: `pulse-${nextDay}-system-${index}`, day: nextDay, ...event })), ...world.pulse].slice(0, 16),
     };
   }
 
@@ -1057,17 +1111,17 @@ export function advanceDay(state: GameState, now = new Date()): GameState {
       cash: nextCash,
       dailyFixedCost,
       teamSpend: roundMoney(state.finance.teamSpend + teamAdvance.payroll),
-      retailRevenue: roundMoney(state.finance.retailRevenue + retailAdvance.revenue),
-      salesRevenue: roundMoney(state.finance.salesRevenue + retailAdvance.revenue),
-      unitsSold: state.finance.unitsSold + retailAdvance.unitsSold,
-      packagedInventoryValue: roundMoney(Math.max(0, state.finance.packagedInventoryValue - retailBookValue)),
+      retailRevenue: roundMoney(state.finance.retailRevenue + directRevenue),
+      salesRevenue: roundMoney(state.finance.salesRevenue + directRevenue),
+      unitsSold: state.finance.unitsSold + (ecosystemAdvance?.playerUnitsSold ?? 0),
+      packagedInventoryValue: roundMoney(Math.max(0, state.finance.packagedInventoryValue - directBookValue)),
     },
     production: { ...state.production, batches },
     supply: supplyAdvance.supply,
     facility,
     brand,
     team: teamAdvance.team,
-    retail: retailAdvance.retail,
+    ecosystem,
     world,
   }, now);
   nextState = tryLaunchQueuedBatch(nextState, now);
@@ -1077,110 +1131,66 @@ export function advanceDay(state: GameState, now = new Date()): GameState {
 
 export function migrateGameState(value: unknown): GameState {
   if (!value || typeof value !== 'object') return createInitialState();
-  const candidate = value as { schemaVersion?: number; phase?: unknown; company?: unknown; finance?: unknown; production?: unknown };
+  const raw = value as Record<string, unknown>;
+  const version = typeof raw.schemaVersion === 'number' ? raw.schemaVersion : 0;
+  if (version < 1 || version > 10) return createInitialState();
 
-  if (candidate.schemaVersion === 9 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
-    return normalizeCurrentState(value as GameState);
-  }
+  const day = typeof raw.day === 'number' ? raw.day : 1;
+  const phase: GamePhase = raw.phase === 'operating' ? 'operating' : 'onboarding';
+  const mode: GameMode = raw.mode === 'roguelike' ? 'roguelike' : 'standard';
+  const rawCompany = (raw.company && typeof raw.company === 'object' ? raw.company : {}) as Record<string, unknown>;
+  const company: CompanyState = {
+    name: typeof rawCompany.name === 'string' ? rawCompany.name : '',
+    reputation: typeof rawCompany.reputation === 'number' ? rawCompany.reputation : 0,
+    completedBatches: typeof rawCompany.completedBatches === 'number' ? rawCompany.completedBatches : 0,
+  };
 
-  if (candidate.schemaVersion === 8 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
-    const legacy = value as LegacyGameStateV8;
-    return normalizeCurrentState({ ...legacy, schemaVersion: 9, retail: legacy.retail ?? createRetailState() } as GameState);
-  }
+  const rawWorld = (raw.world && typeof raw.world === 'object' ? raw.world : null) as Partial<WorldState> | null;
+  const world = rawWorld?.countryId && rawWorld.regionId && rawWorld.propertyId
+    ? {
+        ...createWorldState(rawWorld.countryId, rawWorld.regionId, rawWorld.propertyId),
+        ...rawWorld,
+        companies: rawWorld.companies?.length ? normalizeWorldCompanies(rawWorld.companies) : createWorldCompanies(),
+        pulse: rawWorld.pulse?.length ? rawWorld.pulse : createInitialPulse(),
+      } as WorldState
+    : null;
+  const property = properties.find((item) => item.id === world?.propertyId);
+  const rawFinance = (raw.finance && typeof raw.finance === 'object' ? raw.finance : {}) as Partial<FinanceState>;
+  const rawProduction = (raw.production && typeof raw.production === 'object' ? raw.production : null) as ProductionState | null;
+  const production = rawProduction ?? createProductionState();
+  const supply = (raw.supply && typeof raw.supply === 'object' ? raw.supply : createSupplyState(day)) as SupplyState;
+  const brand = (raw.brand && typeof raw.brand === 'object' ? raw.brand : createBrandState()) as BrandState;
+  const team = (raw.team && typeof raw.team === 'object' ? raw.team : createTeamState(day)) as TeamState;
+  const facility = (raw.facility && typeof raw.facility === 'object'
+    ? raw.facility
+    : property ? createFacilityState({ ...property, propertyDailyCost: property.dailyCost }, day) : null) as FacilityState | null;
+  const retail = (raw.retail && typeof raw.retail === 'object' ? raw.retail : undefined) as RetailState | undefined;
+  const rawEcosystem = (raw.ecosystem && typeof raw.ecosystem === 'object' ? raw.ecosystem : null) as EcosystemState | null;
+  const ecosystem = rawEcosystem ?? buildEcosystemForLegacy(company, world, property, retail, day);
+  const timestamp = new Date().toISOString();
 
-  if (candidate.schemaVersion === 7 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
-    const legacy = value as LegacyGameStateV7;
-    return normalizeCurrentState({ ...legacy, schemaVersion: 9, team: legacy.team ?? createTeamState(legacy.day), retail: createRetailState() } as GameState);
-  }
-
-  if (candidate.schemaVersion === 6 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
-    const legacy = value as LegacyGameStateV6;
-    return normalizeCurrentState({ ...legacy, schemaVersion: 9, brand: legacy.brand ?? createBrandState(), team: createTeamState(legacy.day), retail: createRetailState() } as GameState);
-  }
-
-
-  if (candidate.schemaVersion === 5 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
-    const legacy = value as LegacyGameStateV5;
-    const property = properties.find((item) => item.id === legacy.world?.propertyId);
-    return normalizeCurrentState({ ...legacy, schemaVersion: 9, facility: legacy.facility ?? (property ? createFacilityState({ ...property, propertyDailyCost: property.dailyCost }, legacy.day) : null), team: createTeamState(legacy.day), retail: createRetailState() } as GameState);
-  }
-
-  if (candidate.schemaVersion === 4 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
-    const legacy = value as LegacyGameStateV4;
-    return normalizeCurrentState({ ...legacy, schemaVersion: 9, facility: null, supply: legacy.supply ?? createSupplyState(legacy.day), team: createTeamState(legacy.day), retail: createRetailState() } as GameState);
-  }
-
-  if (candidate.schemaVersion === 3 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
-    return normalizeCurrentState({ ...(value as LegacyGameStateV3), schemaVersion: 9, facility: null, supply: createSupplyState((value as LegacyGameStateV3).day), team: createTeamState((value as LegacyGameStateV3).day), retail: createRetailState() } as GameState);
-  }
-
-  if (candidate.schemaVersion === 2 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
-    const legacy = value as LegacyGameStateV2;
-    return normalizeCurrentState({
-      ...legacy,
-      schemaVersion: 9,
-      facility: null,
-      world: legacy.world ? {
-        ...createWorldState(legacy.world.countryId, legacy.world.regionId, legacy.world.propertyId),
-        companies: legacy.world.companies?.length ? normalizeWorldCompanies(legacy.world.companies) : createWorldCompanies(),
-        pulse: legacy.world.pulse?.length ? legacy.world.pulse : createInitialPulse(),
-      } : null,
-      supply: createSupplyState(legacy.day),
-      brand: createBrandState(),
-      team: createTeamState(legacy.day),
-      retail: createRetailState(),
-      finance: {
-        ...legacy.finance,
-        salesRevenue: 0,
-        unitsSold: 0,
-        supplySpend: 0,
-        facilitySpend: 0,
-        maintenanceSpend: 0,
-    brandSpend: 0,
-    teamSpend: 0,
-        retailSpend: 0,
-        retailRevenue: 0,
-      },
-    });
-  }
-
-  if (candidate.schemaVersion === 1 && candidate.phase && candidate.company && candidate.finance) {
-    const legacy = value as LegacyGameStateV1;
-    return {
-      schemaVersion: 9,
-      phase: legacy.phase,
-      mode: legacy.mode,
-      day: legacy.day,
-      company: { ...legacy.company, completedBatches: 0 },
-      world: legacy.world ? createWorldState(legacy.world.countryId, legacy.world.regionId, legacy.world.propertyId) : null,
-      finance: {
-        ...legacy.finance,
-        productionSpend: 0,
-        equipmentSpend: 0,
-        supplySpend: 0,
-        facilitySpend: 0,
-        maintenanceSpend: 0,
-    brandSpend: 0,
-    teamSpend: 0,
-        retailSpend: 0,
-        retailRevenue: 0,
-        packagedInventoryValue: 0,
-        salesRevenue: 0,
-        unitsSold: 0,
-      },
-      production: createProductionState(),
-      supply: createSupplyState(legacy.day),
-      brand: createBrandState(),
-      team: createTeamState(legacy.day),
-      retail: createRetailState(),
-      facility: legacy.world ? (() => { const property = properties.find((item) => item.id === legacy.world?.propertyId); return property ? createFacilityState({ ...property, propertyDailyCost: property.dailyCost }, legacy.day) : null; })() : null,
-      tutorial: { dismissed: false, completedSteps: [] },
-      discoveredProductFamilies: legacy.discoveredProductFamilies ?? ['beer', 'cider'],
-      createdAt: legacy.createdAt,
-      updatedAt: legacy.updatedAt,
-    };
-  }
-  return createInitialState();
+  return normalizeCurrentState({
+    schemaVersion: 10,
+    phase,
+    mode,
+    day,
+    company,
+    world,
+    finance: {
+      ...createFinance(rawFinance.cash ?? STARTING_CASH[mode], rawFinance.dailyFixedCost ?? 0),
+      ...rawFinance,
+    },
+    production,
+    supply,
+    facility,
+    brand,
+    team,
+    ecosystem,
+    tutorial: (raw.tutorial && typeof raw.tutorial === 'object' ? raw.tutorial : { dismissed: false, completedSteps: [] }) as TutorialState,
+    discoveredProductFamilies: Array.isArray(raw.discoveredProductFamilies) ? raw.discoveredProductFamilies as ProductFamily[] : ['beer', 'cider'],
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : timestamp,
+    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : timestamp,
+  });
 }
 
 function normalizeCurrentState(state: GameState): GameState {
@@ -1216,7 +1226,7 @@ function normalizeCurrentState(state: GameState): GameState {
   } : null;
   return {
     ...state,
-    schemaVersion: 9,
+    schemaVersion: 10,
     finance: {
       ...state.finance,
       salesRevenue: state.finance.salesRevenue ?? 0,
@@ -1232,10 +1242,60 @@ function normalizeCurrentState(state: GameState): GameState {
     production,
     brand: state.brand ?? createBrandState(),
     team: state.team ?? createTeamState(state.day),
-    retail: state.retail ?? createRetailState(),
+    ecosystem: state.ecosystem ?? buildEcosystemForLegacy(state.company, world, properties.find((item) => item.id === world?.propertyId), undefined, state.day),
     supply: state.supply ?? createSupplyState(state.day),
     facility: normalizeFacility(state.facility, state, world),
     world,
+  };
+}
+
+function buildEcosystemForLegacy(
+  company: CompanyState,
+  world: WorldState | null,
+  property: PropertyDefinition | undefined,
+  retail: RetailState | undefined,
+  day: number,
+): EcosystemState | null {
+  if (!world) return null;
+  const resolvedProperty: PropertyDefinition = property ?? {
+    id: world.propertyId,
+    regionId: world.regionId,
+    name: 'Производственный объект',
+    type: 'urban_unit',
+    acquisition: 'rent',
+    upfrontCost: 0,
+    dailyCost: 180,
+    capacity: 2,
+    energyLimit: 3,
+    storageQuality: 2,
+    marketAccess: 2,
+    summary: 'Объект восстановлен из старого сохранения.',
+  };
+  const ecosystem = createEcosystemState({
+    playerCompanyName: company.name || 'Новая компания',
+    countryId: world.countryId,
+    regionId: world.regionId,
+    propertyName: resolvedProperty.name,
+    propertyId: resolvedProperty.id,
+    propertyDailyCost: resolvedProperty.dailyCost,
+    propertyOwned: resolvedProperty.acquisition === 'buy',
+    companies: world.companies,
+    outlets: world.outlets,
+    day,
+  });
+  return migrateRetailIntoEcosystem(ecosystem, retail, day);
+}
+
+function markAcquiredOutlet(world: WorldState | null, assetId: string, ecosystem: EcosystemState, day: number): WorldState | null {
+  if (!world) return null;
+  const asset = ecosystem.assets.find((item) => item.id === assetId);
+  if (!asset?.marketOutletId) return world;
+  return {
+    ...world,
+    outlets: world.outlets.map((outlet) => outlet.id === asset.marketOutletId ? { ...outlet, controlledByPlayer: true } : outlet),
+    proposals: world.proposals.map((proposal) => proposal.outletId === asset.marketOutletId && proposal.status === 'reviewing' ? { ...proposal, status: 'declined' as const, decisionReasons: [...proposal.decisionReasons, 'Точка сменила владельца и больше не рассматривает внешнее предложение.'] } : proposal),
+    repeatOrders: world.repeatOrders.map((order) => order.outletId === asset.marketOutletId && order.status === 'pending' ? { ...order, status: 'expired' as const, decisionNote: 'Точка перешла под контроль игрока; внешний заказ закрыт.' } : order),
+    pulse: [{ id: `pulse-${assetId}-acquired`, day, tone: 'market' as const, title: `${asset.name} сменила владельца`, detail: 'Точка больше не является независимым покупателем и вошла в структуру компании игрока.' }, ...world.pulse].slice(0, 16),
   };
 }
 
@@ -1284,8 +1344,12 @@ function normalizeFacility(facility: FacilityState | null | undefined, state: Ga
   return { ...registered, basePropertyDailyCost: registered.basePropertyDailyCost ?? property.dailyCost };
 }
 
-function withFacilityCost(finance: FinanceState, facility: FacilityState, team: TeamState, retail: RetailState): FinanceState {
-  return { ...finance, dailyFixedCost: roundMoney(facilityDailyCost(facility) + dailyPayroll(team) + retailDailyCost(retail)) };
+function withFacilityCost(finance: FinanceState, facility: FacilityState, team: TeamState, ecosystem: EcosystemState | null): FinanceState {
+  return { ...finance, dailyFixedCost: calculateDailyFixedCost(facility, team, ecosystem) };
+}
+
+function calculateDailyFixedCost(facility: FacilityState | null, team: TeamState, ecosystem: EcosystemState | null): number {
+  return roundMoney((facility ? facilityDailyCost(facility) : 0) + dailyPayroll(team) + (ecosystem ? ecosystemPlayerDailyCost(ecosystem) : 0));
 }
 
 function applyTeamSupportToFacility(previous: FacilityState, advanced: FacilityState, wearReduction: number, sanitationSupport: number): FacilityState {
@@ -1522,6 +1586,24 @@ function advanceWorld(world: WorldState, batches: BatchState[], companyReputatio
   }
 
   return { ...world, companies, outlets, proposals, pulse, releases, demandSignals, reviews, repeatOrders, nextRepeatOrderNumber };
+}
+
+function syncWorldFromEcosystem(world: WorldState, ecosystem: EcosystemState): WorldState {
+  const companies = world.companies.map((company) => {
+    const organization = ecosystem.organizations.find((item) => item.id === `org-${company.id}`);
+    if (!organization) return company;
+    return {
+      ...company,
+      reputation: Math.round(organization.reputation),
+      momentum: clamp(Math.round(50 + (organization.dailyRevenue - organization.dailyCosts) / 45), 0, 100),
+      status: organization.status === 'active' ? (organization.dailyRevenue > organization.dailyCosts * 1.18 ? 'growing' as const : 'stable' as const) : 'struggling' as const,
+    };
+  });
+  const outlets = world.outlets.map((outlet) => {
+    const asset = ecosystem.assets.find((item) => item.marketOutletId === outlet.id);
+    return asset?.operatorOrganizationId === ecosystem.playerOrganizationId ? { ...outlet, controlledByPlayer: true } : outlet;
+  });
+  return { ...world, companies, outlets };
 }
 
 function createWorldState(countryId: string, regionId: string, propertyId: string): WorldState {

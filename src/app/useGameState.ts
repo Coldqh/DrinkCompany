@@ -18,11 +18,13 @@ import {
   dismissTutorial,
   packageProductionBatch,
   orderSupplies,
-  openPlayerRetailVenue,
-  stockPlayerRetailVenue,
-  cleanPlayerRetailVenue,
-  upgradePlayerRetailVenue,
-  setPlayerRetailVenueStatus,
+  acquireWorldAsset,
+  leaseWorldAsset,
+  investWorldOrganization,
+  stockWorldVenue,
+  cleanWorldVenue,
+  upgradeWorldVenue,
+  setWorldVenueStatus,
   purchaseEquipment,
   queueProductionRecipe,
   removeQueuedRecipe,
@@ -94,11 +96,13 @@ export interface GameController {
   setWorkload: (department: TeamDepartment, workload: Workload) => ActionResult;
   setAutomation: (key: keyof TeamAutomation, enabled: boolean) => ActionResult;
   trainEmployee: (employeeId: string, track: TrainingTrack) => ActionResult;
-  openRetailVenue: (type: RetailVenueType, name: string) => ActionResult;
-  stockRetailVenue: (venueId: string, releaseId: string, units: number, price: number) => ActionResult;
-  cleanRetailVenue: (venueId: string) => ActionResult;
-  upgradeRetailVenue: (venueId: string) => ActionResult;
-  setRetailVenueStatus: (venueId: string, status: RetailVenueStatus) => ActionResult;
+  acquireAsset: (assetId: string) => ActionResult;
+  leaseAsset: (assetId: string, type: RetailVenueType, name: string) => ActionResult;
+  investOrganization: (organizationId: string, share: number) => ActionResult;
+  stockWorldVenue: (assetId: string, releaseId: string, units: number, price: number) => ActionResult;
+  cleanWorldVenue: (assetId: string) => ActionResult;
+  upgradeWorldVenue: (assetId: string) => ActionResult;
+  setWorldVenueStatus: (assetId: string, status: RetailVenueStatus) => ActionResult;
 }
 
 export function useGameState(): GameController {
@@ -281,25 +285,34 @@ export function useGameState(): GameController {
     perform((current) => trainTeamEmployee(current, employeeId, track), 'Обучение запущено')
   ), [perform]);
 
-  const openRetailVenueAction = useCallback((type: RetailVenueType, name: string) => (
-    perform((current) => openPlayerRetailVenue(current, { type, name }), 'Собственная точка открыта')
+  const acquireAssetAction = useCallback((assetId: string) => (
+    perform((current) => acquireWorldAsset(current, assetId), 'Объект перешёл под контроль компании')
   ), [perform]);
 
-  const stockRetailVenueAction = useCallback((venueId: string, releaseId: string, units: number, price: number) => (
-    perform((current) => stockPlayerRetailVenue(current, venueId, releaseId, units, price), 'Продукт передан в розничную точку')
+  const leaseAssetAction = useCallback((assetId: string, type: RetailVenueType, name: string) => (
+    perform((current) => leaseWorldAsset(current, assetId, type, name), 'Объект арендован и введён в работу')
   ), [perform]);
 
-  const cleanRetailVenueAction = useCallback((venueId: string) => (
-    perform((current) => cleanPlayerRetailVenue(current, venueId), 'Санитарная смена завершена')
+  const investOrganizationAction = useCallback((organizationId: string, share: number) => (
+    perform((current) => investWorldOrganization(current, organizationId, share), `Куплено ${share}% компании`)
   ), [perform]);
 
-  const upgradeRetailVenueAction = useCallback((venueId: string) => (
-    perform((current) => upgradePlayerRetailVenue(current, venueId), 'Точка расширена')
+  const stockWorldVenueAction = useCallback((assetId: string, releaseId: string, units: number, price: number) => (
+    perform((current) => stockWorldVenue(current, assetId, releaseId, units, price), 'Продукт передан на полку объекта')
   ), [perform]);
 
-  const setRetailVenueStatusAction = useCallback((venueId: string, status: RetailVenueStatus) => (
-    perform((current) => setPlayerRetailVenueStatus(current, venueId, status), status === 'open' ? 'Точка открыта' : 'Точка временно закрыта')
+  const cleanWorldVenueAction = useCallback((assetId: string) => (
+    perform((current) => cleanWorldVenue(current, assetId), 'Санитарная смена завершена')
   ), [perform]);
+
+  const upgradeWorldVenueAction = useCallback((assetId: string) => (
+    perform((current) => upgradeWorldVenue(current, assetId), 'Объект расширен')
+  ), [perform]);
+
+  const setWorldVenueStatusAction = useCallback((assetId: string, status: RetailVenueStatus) => (
+    perform((current) => setWorldVenueStatus(current, assetId, status), status === 'open' ? 'Объект открыт' : 'Объект временно закрыт')
+  ), [perform]);
+
 
   const reset = useCallback(() => replaceState(createInitialState()), [replaceState]);
 
@@ -318,6 +331,7 @@ export function useGameState(): GameController {
     const serialized = await file.text();
     replaceState(parseGameState(serialized));
   }, [replaceState]);
+
 
   return {
     state,
@@ -357,10 +371,12 @@ export function useGameState(): GameController {
     setWorkload: setWorkloadAction,
     setAutomation: setAutomationAction,
     trainEmployee: trainEmployeeAction,
-    openRetailVenue: openRetailVenueAction,
-    stockRetailVenue: stockRetailVenueAction,
-    cleanRetailVenue: cleanRetailVenueAction,
-    upgradeRetailVenue: upgradeRetailVenueAction,
-    setRetailVenueStatus: setRetailVenueStatusAction,
+    acquireAsset: acquireAssetAction,
+    leaseAsset: leaseAssetAction,
+    investOrganization: investOrganizationAction,
+    stockWorldVenue: stockWorldVenueAction,
+    cleanWorldVenue: cleanWorldVenueAction,
+    upgradeWorldVenue: upgradeWorldVenueAction,
+    setWorldVenueStatus: setWorldVenueStatusAction,
   };
 }

@@ -12,6 +12,7 @@ interface CompanyDashboardProps {
   onOpenBatches: () => void;
   onOpenMarket: () => void;
   onOpenTeam: () => void;
+  onOpenWorld: () => void;
   onDismissTutorial: () => void;
 }
 
@@ -29,7 +30,7 @@ const tutorialSteps = [
   { id: 'first-sale', title: 'Закрыть поставку', text: 'Принять оффер и получить первую выручку.' },
 ];
 
-export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onOpenMarket, onOpenTeam, onDismissTutorial }: CompanyDashboardProps) {
+export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onOpenMarket, onOpenTeam, onOpenWorld, onDismissTutorial }: CompanyDashboardProps) {
   const [section, setSection] = useState<DashboardSection>('today');
   const [detail, setDetail] = useState<DetailModal>(null);
   const property = properties.find((item) => item.id === state.world?.propertyId);
@@ -103,6 +104,11 @@ export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onOpe
           <button className="compact-list-row" onClick={onOpenMarket}>
             <span className="row-icon"><Icon name="market" /></span>
             <span><strong>Рыночная сеть</strong><small>{state.world?.outlets.length ?? 0} точек · {activeOffers} офферов</small></span>
+            <Icon name="arrow" />
+          </button>
+          <button className="compact-list-row" onClick={onOpenWorld}>
+            <span className="row-icon"><Icon name="map" /></span>
+            <span><strong>Экосистема города</strong><small>{state.ecosystem?.organizations.length ?? 0} организаций · {state.ecosystem?.assets.length ?? 0} объектов</small></span>
             <Icon name="arrow" />
           </button>
           <button className="compact-list-row" onClick={onOpenTeam}>

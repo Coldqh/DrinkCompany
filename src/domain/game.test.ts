@@ -7,12 +7,14 @@ import {
   advanceDay,
   fulfillRepeatOrder,
   hireTeamCandidate,
-  openPlayerRetailVenue,
-  stockPlayerRetailVenue,
+  acquireWorldAsset,
+  leaseWorldAsset,
+  investWorldOrganization,
+  stockWorldVenue,
   registerBrand,
   registerProductRelease,
-  cleanPlayerRetailVenue,
-  upgradePlayerRetailVenue,
+  cleanWorldVenue,
+  upgradeWorldVenue,
   migrateGameState,
   orderSupplies,
   packageProductionBatch,
@@ -28,6 +30,7 @@ import {
 } from './game';
 import { createRecipeDraft } from './production';
 import { DEFAULT_PACKAGING } from './brand';
+import { createRetailState, openRetailVenue } from './retail';
 import { parseGameState } from '../infrastructure/gameStateRepository';
 
 const property: PropertyDefinition = {
@@ -69,7 +72,7 @@ describe('startCompany', () => {
   it('создаёт рабочее состояние и списывает стоимость объекта', () => {
     const state = createCompany();
     expect(state.phase).toBe('operating');
-    expect(state.schemaVersion).toBe(9);
+    expect(state.schemaVersion).toBe(10);
     expect(state.finance.cash).toBe(100_000);
     expect(state.finance.dailyFixedCost).toBeGreaterThan(180);
     expect(state.facility?.rooms.production).toBe(1);
@@ -181,7 +184,7 @@ describe('save parsing', () => {
   it('принимает текущее сохранение schemaVersion 6', () => {
     const state = createCompany();
     const parsed = parseGameState(JSON.stringify(state));
-    expect(parsed.schemaVersion).toBe(9);
+    expect(parsed.schemaVersion).toBe(10);
     expect(parsed.facility).not.toBeNull();
   });
 });
@@ -202,7 +205,7 @@ describe('save migration', () => {
     };
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(9);
+    expect(migrated.schemaVersion).toBe(10);
     expect(migrated.production.batches).toEqual([]);
     expect(migrated.company.completedBatches).toBe(0);
     expect(migrated.supply.inventory).toEqual([]);
@@ -220,7 +223,7 @@ describe('save migration', () => {
     delete world.nextRepeatOrderNumber;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(9);
+    expect(migrated.schemaVersion).toBe(10);
     expect(migrated.world?.repeatOrders).toEqual([]);
     expect(migrated.world?.demandSignals.length).toBeGreaterThan(0);
     expect(migrated.supply.offers.length).toBeGreaterThan(0);
@@ -240,7 +243,7 @@ describe('save migration', () => {
     delete finance.unitsSold;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(9);
+    expect(migrated.schemaVersion).toBe(10);
     expect(migrated.world?.outlets).toHaveLength(12);
     expect(migrated.finance.salesRevenue).toBe(0);
   });
@@ -394,8 +397,8 @@ describe('living market', () => {
 });
 
 
-describe('owned retail', () => {
-  it('открывает бар, передаёт релиз на полку и продаёт его по дням', () => {
+describe('world ecosystem', () => {
+  it('арендует реальный объект, передаёт релиз на полку и продаёт его по дням', () => {
     let state = createCompany();
     for (const equipmentId of ['micro-brewhouse', 'fermentation-bank', 'compact-bottler', 'lab-kit']) {
       const equipment = equipmentCatalog.find((item) => item.id === equipmentId);
@@ -403,7 +406,7 @@ describe('owned retail', () => {
       state = purchaseEquipment(state, equipment);
     }
     state = stockBeerMaterials(state);
-    const draft = { ...createRecipeDraft('beer'), name: 'Retail Pale', primaryDays: 1, conditioningDays: 1, volumeLiters: 80 };
+    const draft = { ...createRecipeDraft('beer'), name: 'Ecosystem Pale', primaryDays: 1, conditioningDays: 1, volumeLiters: 80 };
     state = startProductionBatch(state, draft, property, equipmentCatalog);
     state = advanceDay(advanceDay(state));
     const batch = state.production.batches[0];
@@ -416,41 +419,75 @@ describe('owned retail', () => {
     state = registerProductRelease(state, { brandId: brand.id, batchId: batch.id, name: 'District Pale', positioning: 'bar', packaging: DEFAULT_PACKAGING, wholesalePrice: 2.6, retailPrice: 5.2 });
     const release = state.brand.releases[0];
     if (!release) throw new Error('release missing');
-    state = openPlayerRetailVenue(state, { type: 'bar', name: 'Black Yard' });
-    const venue = state.retail.venues[0];
-    if (!venue) throw new Error('venue missing');
+    state = { ...state, finance: { ...state.finance, cash: state.finance.cash + 100_000 } };
+    state = leaseWorldAsset(state, 'vacant-bavaria-1', 'bar', 'Black Yard');
+    const asset = state.ecosystem?.assets.find((item) => item.id === 'vacant-bavaria-1');
+    if (!asset?.venue) throw new Error('venue missing');
     const availableBefore = state.production.batches.find((item) => item.id === batch.id)?.availableUnits ?? 0;
-    state = stockPlayerRetailVenue(state, venue.id, release.id, 24, 5.4);
+    state = stockWorldVenue(state, asset.id, release.id, 24, 5.4);
     expect(state.production.batches.find((item) => item.id === batch.id)?.availableUnits).toBe(availableBefore - 24);
     const cashBefore = state.finance.cash;
     state = advanceDay(state);
-    expect(state.retail.reports[0]?.unitsSold).toBeGreaterThan(0);
-    expect(state.retail.directSalesRevenue).toBeGreaterThan(0);
+    expect(state.ecosystem?.retailReports[0]?.unitsSold).toBeGreaterThan(0);
     expect(state.finance.retailRevenue).toBeGreaterThan(0);
     expect(state.finance.cash).toBeGreaterThan(cashBefore - state.finance.dailyFixedCost);
   });
 
-  it('учитывает санитарную смену и расширение собственной точки', () => {
-    let state = openPlayerRetailVenue(createCompany(), { type: 'shop', name: 'District Bottle' });
-    const venue = state.retail.venues[0];
-    if (!venue) throw new Error('venue missing');
-    state = { ...state, retail: { ...state.retail, venues: [{ ...venue, cleanliness: 45 }] } };
-    const cashBeforeClean = state.finance.cash;
-    state = cleanPlayerRetailVenue(state, venue.id);
-    expect(state.retail.venues[0]?.cleanliness).toBeGreaterThan(45);
-    expect(state.finance.cash).toBeLessThan(cashBeforeClean);
-    const dailyBefore = state.finance.dailyFixedCost;
-    state = upgradePlayerRetailVenue(state, venue.id);
-    expect(state.retail.venues[0]?.level).toBe(2);
-    expect(state.finance.dailyFixedCost).toBeGreaterThan(dailyBefore);
+  it('выкупает существующий бар, инвестирует в компанию и меняет владельца объекта', () => {
+    let state = createCompany();
+    state = { ...state, finance: { ...state.finance, cash: 500_000 } };
+    const target = state.ecosystem?.assets.find((asset) => asset.status === 'for_sale' && asset.marketOutletId);
+    if (!target) throw new Error('sale asset missing');
+    const sellerId = target.ownerOrganizationId;
+    state = acquireWorldAsset(state, target.id);
+    const acquired = state.ecosystem?.assets.find((asset) => asset.id === target.id);
+    expect(acquired?.ownerOrganizationId).toBe(state.ecosystem?.playerOrganizationId);
+    expect(acquired?.operatorOrganizationId).toBe(state.ecosystem?.playerOrganizationId);
+    expect(state.world?.outlets.find((outlet) => outlet.id === target.marketOutletId)?.controlledByPlayer).toBe(true);
+    const seller = state.ecosystem?.organizations.find((organization) => organization.id === sellerId);
+    expect(seller?.assetIds).not.toContain(target.id);
+
+    const organization = state.ecosystem?.organizations.find((item) => item.kind === 'producer');
+    if (!organization) throw new Error('organization missing');
+    const cashBefore = state.finance.cash;
+    state = investWorldOrganization(state, organization.id, 10);
+    expect(state.ecosystem?.holdings.some((holding) => holding.organizationId === organization.id && holding.share === 10)).toBe(true);
+    expect(state.finance.cash).toBeLessThan(cashBefore);
   });
 
-  it('добавляет пустую розницу при миграции schemaVersion 8', () => {
-    const legacy = JSON.parse(JSON.stringify(createCompany())) as Record<string, unknown>;
-    legacy.schemaVersion = 8;
-    delete legacy.retail;
+  it('учитывает санитарную смену и расширение контролируемой точки', () => {
+    let state = createCompany();
+    state = { ...state, finance: { ...state.finance, cash: 300_000 } };
+    state = leaseWorldAsset(state, 'vacant-bavaria-1', 'shop', 'District Bottle');
+    const asset = state.ecosystem?.assets.find((item) => item.id === 'vacant-bavaria-1');
+    if (!asset?.venue || !state.ecosystem) throw new Error('venue missing');
+    state = {
+      ...state,
+      ecosystem: {
+        ...state.ecosystem,
+        assets: state.ecosystem.assets.map((item) => item.id === asset.id && item.venue ? { ...item, venue: { ...item.venue, cleanliness: 45 } } : item),
+      },
+    };
+    const cashBeforeClean = state.finance.cash;
+    state = cleanWorldVenue(state, asset.id);
+    expect(state.ecosystem?.assets.find((item) => item.id === asset.id)?.venue?.cleanliness).toBeGreaterThan(45);
+    expect(state.finance.cash).toBeLessThan(cashBeforeClean);
+    const dailyBefore = state.finance.dailyFixedCost;
+    const levelBefore = state.ecosystem?.assets.find((item) => item.id === asset.id)?.venue?.level ?? 0;
+    state = upgradeWorldVenue(state, asset.id);
+    expect(state.ecosystem?.assets.find((item) => item.id === asset.id)?.venue?.level).toBe(levelBefore + 1);
+    expect(state.finance.dailyFixedCost).toBeGreaterThanOrEqual(dailyBefore);
+  });
+
+  it('переносит старую розницу в единую экосистему при миграции schemaVersion 9', () => {
+    const current = createCompany();
+    const opened = openRetailVenue(createRetailState(), { type: 'bar', name: 'Legacy Bar', regionId: 'bavaria' }, current.day).retail;
+    const legacy = JSON.parse(JSON.stringify(current)) as Record<string, unknown>;
+    legacy.schemaVersion = 9;
+    legacy.retail = opened;
+    delete legacy.ecosystem;
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(9);
-    expect(migrated.retail.venues).toEqual([]);
+    expect(migrated.schemaVersion).toBe(10);
+    expect(migrated.ecosystem?.assets.some((asset) => asset.name === 'Legacy Bar' && asset.operatorOrganizationId === migrated.ecosystem?.playerOrganizationId)).toBe(true);
   });
 });

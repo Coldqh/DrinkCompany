@@ -55,6 +55,7 @@ export function MarketWorld({ state, onSendProposal, onAcceptOffer, onDeclineOff
   const selectedBatch = packagedBatches.find((batch) => batch.id === selectedBatchId) ?? packagedBatches[0] ?? null;
   const outlets = world?.outlets ?? [];
   const visibleOutlets = useMemo(() => outlets.filter((outlet) => {
+    if (outlet.controlledByPlayer) return false;
     if (filter === 'all') return true;
     if (filter === 'local') return outlet.regionId === world?.regionId || outlet.countryId === world?.countryId;
     return outlet.channel === filter;

@@ -71,7 +71,7 @@ export function Modal({ title, kicker, children, onClose, footer, wide = false }
   );
 }
 
-export function EmptyState({ icon, title, text, action }: { icon: 'archive' | 'batch' | 'bottle' | 'handshake' | 'market' | 'factory' | 'store'; title: string; text: string; action?: ReactNode }) {
+export function EmptyState({ icon, title, text, action }: { icon: 'archive' | 'batch' | 'bottle' | 'handshake' | 'market' | 'factory' | 'store' | 'map' | 'contract'; title: string; text: string; action?: ReactNode }) {
   return (
     <div className="compact-empty">
       <div><Icon name={icon} /></div>

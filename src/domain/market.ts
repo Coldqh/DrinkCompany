@@ -37,6 +37,7 @@ export interface MarketOutletState {
   requirementTags: string[];
   weights: OutletWeights;
   supplierCompanyIds: string[];
+  controlledByPlayer?: boolean;
 }
 
 export interface DemandSignal {
