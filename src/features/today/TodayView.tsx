@@ -86,7 +86,12 @@ function buildDecisions(state: GameState): DecisionItem[] {
   const delayed = state.supply.purchaseOrders.filter((order) => order.status === 'delayed');
   const exhausted = state.team.employees.filter((employee) => employee.fatigue >= 85 || employee.morale <= 30);
   const damaged = Object.entries(state.facility?.equipmentCondition ?? {}).filter(([, item]) => item < 25);
+  const playerOrganizationId = state.ecosystem?.playerOrganizationId;
+  const compliance = state.ecosystem?.regulation.compliance.find((item) => item.organizationId === playerOrganizationId);
+  const regulatoryViolations = state.ecosystem?.regulation.violations.filter((item) => item.organizationId === playerOrganizationId && !item.resolved) ?? [];
+  const overdueExcise = state.ecosystem?.regulation.obligations.filter((item) => item.organizationId === playerOrganizationId && item.status === 'overdue') ?? [];
 
+  if (regulatoryViolations.length > 0 || overdueExcise.length > 0) items.push({ id: 'regulation', title: 'Регулятор требует внимания', detail: `${regulatoryViolations.length} нарушений · просрочено ${overdueExcise.length} обязательств · комплаенс ${compliance?.score ?? 100}/100.`, target: 'company', icon: 'warning', urgent: true });
   if (offers.length > 0) items.push({ id: 'offers', title: `${offers.length} коммерческих оффера`, detail: 'Принять условия или отказаться.', target: 'trade', icon: 'contract', urgent: true });
   if (orders.length > 0) {
     const nearest = Math.min(...orders.map((order) => order.dueDay));

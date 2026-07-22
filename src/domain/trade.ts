@@ -36,6 +36,8 @@ export interface TradeProductState {
   unitCost: number;
   wholesalePrice: number;
   recommendedRetailPrice: number;
+  alcoholByVolume: number;
+  packageVolumeLiters: number;
   status: TradeProductStatus;
   totalProduced: number;
   totalSold: number;
@@ -600,7 +602,7 @@ export function normalizeTradeState(value: TradeState | null | undefined): Trade
   };
   return {
     inventory: value.inventory ?? [],
-    products: (value.products ?? []).map((product) => ({ ...product, beverageCategoryId: product.beverageCategoryId ?? legacyCategoryForFamily(product.family) })),
+    products: (value.products ?? []).map((product) => { const categoryId = product.beverageCategoryId ?? legacyCategoryForFamily(product.family); return ({ ...product, beverageCategoryId: categoryId, alcoholByVolume: Number.isFinite(product.alcoholByVolume) ? product.alcoholByVolume : defaultAbvForCategory(categoryId), packageVolumeLiters: Number.isFinite(product.packageVolumeLiters) ? product.packageVolumeLiters : defaultPackageVolumeForCategory(categoryId) }); }),
     batches: value.batches ?? [],
     contracts: value.contracts ?? [],
     shipments: value.shipments ?? [],
@@ -645,6 +647,8 @@ function createSeedProduct(producer: OrganizationState, family: TradeProductFami
     unitCost,
     wholesalePrice,
     recommendedRetailPrice: roundMoney(wholesalePrice * 1.72),
+    alcoholByVolume: defaultAbvForCategory(legacyCategoryForFamily(family)),
+    packageVolumeLiters: defaultPackageVolumeForCategory(legacyCategoryForFamily(family)),
     status: 'active',
     totalProduced: 0,
     totalSold: 0,
@@ -654,6 +658,22 @@ function createSeedProduct(producer: OrganizationState, family: TradeProductFami
   };
 }
 
+
+
+function defaultAbvForCategory(categoryId: BeverageCategoryId): number {
+  const values: Record<string, number> = {
+    beer: 5.0, cider: 5.5, perry: 5.5, still_wine: 12.5, sparkling_wine: 12,
+    fortified_wine: 18, whisky: 40, rum: 40, vodka: 40, gin: 40, agave_spirit: 40,
+    brandy: 40, liqueur: 24, amaro_bitter: 28, vermouth_aperitif: 16, sake: 15,
+    mead: 12, rtd: 5, alcohol_free: .5, mixer: 0,
+  };
+  return values[categoryId] ?? 5;
+}
+
+function defaultPackageVolumeForCategory(categoryId: BeverageCategoryId): number {
+  if (['still_wine', 'sparkling_wine', 'fortified_wine', 'whisky', 'rum', 'vodka', 'gin', 'agave_spirit', 'brandy', 'liqueur', 'amaro_bitter', 'vermouth_aperitif', 'sake', 'mead'].includes(categoryId)) return .75;
+  return .5;
+}
 
 function legacyCategoryForFamily(family: TradeProductFamily): BeverageCategoryId {
   if (family === 'wine') return 'still_wine';

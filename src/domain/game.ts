@@ -221,6 +221,7 @@ export interface FinanceState {
   teamSpend: number;
   retailSpend: number;
   corporateSpend: number;
+  taxSpend: number;
   retailRevenue: number;
   packagedInventoryValue: number;
   salesRevenue: number;
@@ -249,7 +250,7 @@ export interface TutorialState {
 }
 
 export interface GameState {
-  schemaVersion: 15;
+  schemaVersion: 16;
   phase: GamePhase;
   mode: GameMode;
   day: number;
@@ -358,7 +359,7 @@ export const STARTING_CASH: Record<GameMode, number> = {
 export function createInitialState(now = new Date()): GameState {
   const timestamp = now.toISOString();
   return {
-    schemaVersion: 15,
+    schemaVersion: 16,
     phase: 'onboarding',
     mode: 'standard',
     day: 1,
@@ -403,7 +404,7 @@ export function startCompany(selection: NewGameSelection, now = new Date()): Gam
     day: 1,
   });
   return {
-    schemaVersion: 15,
+    schemaVersion: 16,
     phase: 'operating',
     mode: selection.mode,
     day: 1,
@@ -1124,7 +1125,7 @@ export function advanceDay(state: GameState, now = new Date()): GameState {
   const supplyAdvance = advanceSupplyDay(state.supply, nextDay);
   const brand = advanceBrandDay(state.brand, nextDay);
   const ecosystemAdvance = state.ecosystem
-    ? advanceEcosystemDay(state.ecosystem, brand, batches, nextDay, workforce.salesSkill + workforce.marketingSkill)
+    ? advanceEcosystemDay(state.ecosystem, brand, batches, nextDay, workforce.salesSkill + workforce.marketingSkill, state.finance.cash)
     : null;
   const directReports = ecosystemAdvance?.reports ?? [];
   const directBookValue = directReports.reduce((sum, report) => sum + report.lines.reduce((lineSum, line) => {
@@ -1134,7 +1135,8 @@ export function advanceDay(state: GameState, now = new Date()): GameState {
   const ecosystem = ecosystemAdvance?.ecosystem ?? state.ecosystem;
   const dailyFixedCost = calculateDailyFixedCost(facility, teamAdvance.team, ecosystem);
   const directRevenue = ecosystemAdvance?.playerRevenue ?? 0;
-  const nextCash = roundMoney(state.finance.cash - dailyFixedCost + directRevenue);
+  const playerTaxPaid = ecosystemAdvance?.playerTaxPaid ?? 0;
+  const nextCash = roundMoney(state.finance.cash - dailyFixedCost + directRevenue - playerTaxPaid);
   let world = state.world ? advanceWorld(state.world, batches, state.company.reputation, nextDay, brand, workforce.salesSkill) : null;
   if (world && ecosystem) world = syncWorldFromEcosystem(world, ecosystem);
   const externalEvents = [
@@ -1158,6 +1160,7 @@ export function advanceDay(state: GameState, now = new Date()): GameState {
       cash: nextCash,
       dailyFixedCost,
       teamSpend: roundMoney(state.finance.teamSpend + teamAdvance.payroll),
+      taxSpend: roundMoney((state.finance.taxSpend ?? 0) + playerTaxPaid),
       retailRevenue: roundMoney(state.finance.retailRevenue + directRevenue),
       salesRevenue: roundMoney(state.finance.salesRevenue + directRevenue),
       unitsSold: state.finance.unitsSold + (ecosystemAdvance?.playerUnitsSold ?? 0),
@@ -1180,7 +1183,7 @@ export function migrateGameState(value: unknown): GameState {
   if (!value || typeof value !== 'object') return createInitialState();
   const raw = value as Record<string, unknown>;
   const version = typeof raw.schemaVersion === 'number' ? raw.schemaVersion : 0;
-  if (version < 1 || version > 15) return createInitialState();
+  if (version < 1 || version > 16) return createInitialState();
 
   const day = typeof raw.day === 'number' ? raw.day : 1;
   const phase: GamePhase = raw.phase === 'operating' ? 'operating' : 'onboarding';
@@ -1217,7 +1220,7 @@ export function migrateGameState(value: unknown): GameState {
   const timestamp = new Date().toISOString();
 
   return normalizeCurrentState({
-    schemaVersion: 15,
+    schemaVersion: 16,
     phase,
     mode,
     day,
@@ -1273,7 +1276,7 @@ function normalizeCurrentState(state: GameState): GameState {
   } : null;
   return {
     ...state,
-    schemaVersion: 15,
+    schemaVersion: 16,
     finance: {
       ...state.finance,
       salesRevenue: state.finance.salesRevenue ?? 0,
@@ -1285,6 +1288,7 @@ function normalizeCurrentState(state: GameState): GameState {
       teamSpend: state.finance.teamSpend ?? 0,
       retailSpend: state.finance.retailSpend ?? 0,
       corporateSpend: state.finance.corporateSpend ?? 0,
+      taxSpend: state.finance.taxSpend ?? 0,
       retailRevenue: state.finance.retailRevenue ?? 0,
     },
     production,
@@ -1362,6 +1366,7 @@ function createFinance(cash: number, dailyFixedCost: number): FinanceState {
     teamSpend: 0,
     retailSpend: 0,
     corporateSpend: 0,
+    taxSpend: 0,
     retailRevenue: 0,
     packagedInventoryValue: 0,
     salesRevenue: 0,

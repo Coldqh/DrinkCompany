@@ -17,6 +17,7 @@ import {
 import { commodityName, inventoryQuantity, productFamilyLabel, type TradeProductState } from '../../domain/trade';
 import { regionDemandSummary } from '../../domain/demand';
 import { leaderRoleLabel, strategyLabel } from '../../domain/worldIntelligence';
+import { activeLicensesForOrganization, organizationCompliance } from '../../domain/regulation';
 import type { RetailVenueStatus, RetailVenueType } from '../../domain/retail';
 import { Icon } from '../../ui/Icon';
 import { CompactHeader, EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
@@ -349,6 +350,7 @@ function OrganizationModal({ organization, assets, ecosystem, currentShare, cash
   return (
     <Modal title={organization.name} kicker={`${organizationKindLabel(organization.kind)} · ${statusLabel(organization.status)}`} onClose={onClose}>
       <div className="detail-grid"><Detail label="Владелец" value={organization.ownerLabel} /><Detail label="Оценка" value={formatMoney(organization.valuation)} /><Detail label="Деньги" value={formatMoney(organization.cash)} /><Detail label="Долг" value={formatMoney(organization.debt)} /><Detail label="Выручка/д" value={formatMoney(organization.dailyRevenue)} /><Detail label="Расход/д" value={formatMoney(organization.dailyCosts)} /></div>
+      {(() => { const compliance = organizationCompliance(ecosystem.regulation, organization.id); const licenses = activeLicensesForOrganization(ecosystem.regulation, organization.id); const latestInspection = ecosystem.regulation.inspections.find((item) => item.organizationId === organization.id); return <div className="organization-intelligence"><span>Легальный оборот</span><strong>Комплаенс {compliance.score}/100</strong><small>{licenses.length} действующих разрешений · просроченный акциз {formatMoney(compliance.overdueTax)}{latestInspection ? ` · последняя проверка: день ${latestInspection.day}` : ''}</small></div>; })()}
       {(() => {
         const mind = ecosystem.intelligence.minds.find((item) => item.organizationId === organization.id);
         const leaders = ecosystem.intelligence.leaders.filter((leader) => leader.organizationId === organization.id && leader.active).sort((a, b) => b.influence - a.influence);
@@ -393,7 +395,7 @@ function ProductModal({ product, ecosystem, onClose }: { product: TradeProductSt
   const shelves = ecosystem.trade.shelves.filter((listing) => listing.productId === product.id);
   const contracts = ecosystem.trade.contracts.filter((contract) => contract.commodityKind === 'product' && contract.commodityId === product.id);
   return <Modal title={product.name} kicker={`${producer?.name ?? 'Производитель'} · ${productFamilyLabel(product.family)}`} onClose={onClose}>
-    <div className="detail-grid"><Detail label="Качество" value={`${product.quality}/100`} /><Detail label="Склад" value={`${Math.round(stock)} бут.`} /><Detail label="Опт" value={formatMoney(product.wholesalePrice)} /><Detail label="Розница" value={formatMoney(product.recommendedRetailPrice)} /><Detail label="Произведено" value={String(product.totalProduced)} /><Detail label="Продано" value={String(product.totalSold)} /></div>
+    <div className="detail-grid"><Detail label="Качество" value={`${product.quality}/100`} /><Detail label="Крепость" value={`${product.alcoholByVolume}%`} /><Detail label="Объём" value={`${product.packageVolumeLiters} л`} /><Detail label="Склад" value={`${Math.round(stock)} бут.`} /><Detail label="Опт" value={formatMoney(product.wholesalePrice)} /><Detail label="Розница" value={formatMoney(product.recommendedRetailPrice)} /><Detail label="Произведено" value={String(product.totalProduced)} /><Detail label="Продано" value={String(product.totalSold)} /></div>
     <div className="organization-assets"><span>Где продаётся</span>{shelves.length === 0 ? <small>Продукт ещё не попал на полки.</small> : shelves.map((listing) => { const asset = ecosystem.assets.find((item) => item.id === listing.assetId); return <div key={listing.id}><strong>{asset?.name ?? listing.assetId}</strong><small>{listing.units} осталось · сегодня {listing.unitsSoldToday} · цена {formatMoney(listing.retailPrice)}</small></div>; })}</div>
     <div className="organization-assets"><span>Контракты и партии</span>{contracts.map((contract) => { const buyer = ecosystem.organizations.find((item) => item.id === contract.buyerOrganizationId); return <div key={contract.id}><strong>{buyer?.name}</strong><small>{contract.quantity} ед. каждые {contract.intervalDays} дн. · {contract.lastResult}</small></div>; })}{batches.map((batch) => <div key={batch.id}><strong>{batch.status === 'ready' ? 'Готовая партия' : batch.status === 'blocked' ? 'Заблокирована' : 'В производстве'}</strong><small>{batch.producedUnits || batch.plannedUnits} ед. · {batch.issue ?? `день готовности ${batch.readyDay}`}</small></div>)}</div>
   </Modal>;

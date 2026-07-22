@@ -1,12 +1,12 @@
 import { beverageBlueprints, type BeverageCategoryId } from '../data/beverageCatalog';
 
-export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment';
+export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment' | 'authority' | 'license' | 'inspection' | 'tax_obligation';
 export type LedgerAccount = `org:${string}:cash` | `org:${string}:revenue` | `org:${string}:expense` | `system:${string}`;
 export type ScheduleCadence = 'daily' | 'weekly' | 'monthly' | 'seasonal' | 'annual' | 'once';
 
 export interface KernelOrganizationInput { id: string; name: string; countryId: string; regionId: string; }
 export interface KernelAssetInput { id: string; ownerOrganizationId: string | null; operatorOrganizationId: string | null; countryId: string; regionId: string; type: string; }
-export interface KernelProductInput { id: string; producerOrganizationId: string; name: string; family: string; beverageCategoryId?: string; }
+export interface KernelProductInput { id: string; producerOrganizationId: string; name: string; family: string; beverageCategoryId?: string; alcoholByVolume?: number; packageVolumeLiters?: number; }
 export interface KernelLotInput { id: string; organizationId: string; commodityKind: string; commodityId: string; quantity: number; unit: string; originOrganizationId: string; }
 export interface KernelContractInput { id: string; sellerOrganizationId: string; buyerOrganizationId: string; commodityKind: string; commodityId: string; }
 export interface KernelShipmentInput { id: string; sellerOrganizationId: string; buyerOrganizationId: string; buyerAssetId: string | null; commodityId: string; quantity: number; unitPrice: number; status: string; arrivalDay: number; }
@@ -28,7 +28,7 @@ export interface KernelEntityRef {
   ownerOrganizationId: string | null;
   countryId: string | null;
   regionId: string | null;
-  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand';
+  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand' | 'regulation';
 }
 
 export interface KernelProductSpecification {
@@ -141,6 +141,14 @@ export interface KernelDemandSnapshot {
   }>;
 }
 
+export interface KernelRegulationSnapshot {
+  authorities: Array<{ id: string; countryId: string; name: string }>;
+  licenses: Array<{ id: string; organizationId: string; countryId: string; permitType: string; assetId: string | null }>;
+  obligations: Array<{ id: string; organizationId: string; authorityId: string; amount: number; currency: string; status: string; assessedDay: number }>;
+  inspections: Array<{ id: string; organizationId: string; authorityId: string; result: string; day: number }>;
+  payments: Array<{ id: string; day: number; organizationId: string; authorityId: string; amount: number; currency: string; obligationId: string }>;
+}
+
 export interface KernelCreateInput {
   day: number;
   seedText: string;
@@ -148,11 +156,12 @@ export interface KernelCreateInput {
   assets: KernelAssetInput[];
   trade: KernelTradeSnapshot;
   demand?: KernelDemandSnapshot;
+  regulation?: KernelRegulationSnapshot;
 }
 
 export function createEcosystemKernel(input: KernelCreateInput): EcosystemKernelState {
   const seed = hashSeed(input.seedText);
-  const entities = buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand);
+  const entities = buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation);
   const productSpecifications = input.trade.products.map((product) => createProductSpecification(product, input.day));
   const traceability = input.trade.inventory.map((lot, index) => ({
     id: `trace-${index + 1}`,
@@ -188,7 +197,7 @@ export function normalizeEcosystemKernel(kernel: EcosystemKernelState | undefine
   const traceability = mergeTraceability(kernel.traceability ?? [], input.trade.inventory, input.day);
   const normalized: EcosystemKernelState = {
     ...kernel,
-    entities: buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand),
+    entities: buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation),
     productSpecifications: mergeProductSpecifications(kernel.productSpecifications ?? [], input.trade.products, input.day),
     moneyLedger: kernel.moneyLedger ?? [],
     goodsLedger: kernel.goodsLedger ?? [],
@@ -274,6 +283,27 @@ export function synchronizeKernelFromTrade(kernel: EcosystemKernelState, trade: 
     recordedGoodsSources.add(sourceId);
   }
   return { ...next, traceability: mergeTraceability(next.traceability, trade.inventory, day) };
+}
+
+
+export function synchronizeKernelFromRegulation(kernel: EcosystemKernelState, regulation: KernelRegulationSnapshot): EcosystemKernelState {
+  let next = kernel;
+  const sources = new Set(next.moneyLedger.map((entry) => entry.sourceId));
+  for (const payment of regulation.payments) {
+    if (payment.amount <= 0 || sources.has(payment.id)) continue;
+    next = recordMoneyTransfer(next, {
+      day: payment.day,
+      debitAccount: `org:${payment.organizationId}:expense`,
+      creditAccount: `system:${payment.authorityId}:tax_revenue`,
+      amount: payment.amount,
+      currency: payment.currency,
+      sourceType: 'excise_payment',
+      sourceId: payment.id,
+      memo: `Уплата акциза ${payment.obligationId}`,
+    });
+    sources.add(payment.id);
+  }
+  return next;
 }
 
 export function runObserverKernelSimulation(kernel: EcosystemKernelState, trade: KernelTradeSnapshot, days: number): EcosystemKernelState {
@@ -372,7 +402,7 @@ export function nextRandom(state: number): { state: number; value: number } {
   return { state: next || 1, value: next / 0x1_0000_0000 };
 }
 
-function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: KernelAssetInput[], trade: KernelTradeSnapshot, demand?: KernelDemandSnapshot): KernelEntityRef[] {
+function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: KernelAssetInput[], trade: KernelTradeSnapshot, demand?: KernelDemandSnapshot, regulation?: KernelRegulationSnapshot): KernelEntityRef[] {
   const entities: KernelEntityRef[] = [];
   for (const organization of organizations) entities.push({ id: organization.id, kind: 'organization', label: organization.name, ownerOrganizationId: organization.id, countryId: organization.countryId, regionId: organization.regionId, sourceModule: 'ecosystem' });
   for (const asset of assets) entities.push({ id: asset.id, kind: 'asset', label: asset.type, ownerOrganizationId: asset.ownerOrganizationId, countryId: asset.countryId, regionId: asset.regionId, sourceModule: 'ecosystem' });
@@ -383,6 +413,10 @@ function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: K
     entities.push({ id: `region:${region.regionId}`, kind: 'region', label: region.regionId, ownerOrganizationId: null, countryId: region.countryId, regionId: region.regionId, sourceModule: 'demand' });
     for (const segment of region.segments) entities.push({ id: segment.id, kind: 'consumer_segment', label: segment.name, ownerOrganizationId: null, countryId: region.countryId, regionId: region.regionId, sourceModule: 'demand' });
   }
+  for (const authority of regulation?.authorities ?? []) entities.push({ id: authority.id, kind: 'authority', label: authority.name, ownerOrganizationId: null, countryId: authority.countryId, regionId: null, sourceModule: 'regulation' });
+  for (const license of regulation?.licenses ?? []) entities.push({ id: license.id, kind: 'license', label: license.permitType, ownerOrganizationId: license.organizationId, countryId: license.countryId, regionId: null, sourceModule: 'regulation' });
+  for (const obligation of regulation?.obligations ?? []) entities.push({ id: obligation.id, kind: 'tax_obligation', label: obligation.status, ownerOrganizationId: obligation.organizationId, countryId: null, regionId: null, sourceModule: 'regulation' });
+  for (const inspection of regulation?.inspections ?? []) entities.push({ id: inspection.id, kind: 'inspection', label: inspection.result, ownerOrganizationId: inspection.organizationId, countryId: null, regionId: null, sourceModule: 'regulation' });
   return deduplicateEntities(entities);
 }
 
@@ -396,7 +430,7 @@ function createProductSpecification(product: KernelProductInput, day: number): K
   const categoryId = normalizeCategoryId(product.beverageCategoryId ?? product.family);
   const blueprint = beverageBlueprints.find((item) => item.categoryId === categoryId) ?? beverageBlueprints[0];
   if (!blueprint) throw new Error('Каталог напитков пуст');
-  return { productId: product.id, blueprintId: blueprint.id, beverageCategoryId: categoryId, producerOrganizationId: product.producerOrganizationId, revision: 1, createdDay: day, attributes: {} };
+  return { productId: product.id, blueprintId: blueprint.id, beverageCategoryId: categoryId, producerOrganizationId: product.producerOrganizationId, revision: 1, createdDay: day, attributes: { alcoholByVolume: product.alcoholByVolume ?? 0, packageVolumeLiters: product.packageVolumeLiters ?? .5 } };
 }
 
 function mergeProductSpecifications(current: KernelProductSpecification[], products: KernelProductInput[], day: number): KernelProductSpecification[] {

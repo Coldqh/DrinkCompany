@@ -14,6 +14,11 @@ export interface ObserverSimulationReport {
   traceNodes: number;
   demandRegionCount: number;
   consumerPurchases: number;
+  regulatoryAuthorities: number;
+  activeLicenses: number;
+  exciseObligations: number;
+  regulatoryPayments: number;
+  openRegulatoryViolations: number;
   finalPlayerCash: number;
   violations: string[];
 }
@@ -67,6 +72,11 @@ export function runObserverSimulation(initial: GameState, days: number, options:
         traceNodes: 0,
         demandRegionCount: 0,
         consumerPurchases: 0,
+        regulatoryAuthorities: 0,
+        activeLicenses: 0,
+        exciseObligations: 0,
+        regulatoryPayments: 0,
+        openRegulatoryViolations: 0,
         finalPlayerCash: state.finance.cash,
         violations: state.phase === 'operating' ? ['Operating state has no ecosystem'] : [],
       },
@@ -81,6 +91,10 @@ export function runObserverSimulation(initial: GameState, days: number, options:
   if (ecosystem.trade.inventory.some((lot) => lot.quantity < 0)) violations.push('Обнаружен отрицательный товарный остаток');
   if (ecosystem.demand.regions.some((region) => region.population <= 0 || region.adultPopulation <= 0)) violations.push('Некорректное население региона');
   if (ecosystem.demand.purchases.some((purchase) => purchase.units <= 0 || purchase.revenue < 0)) violations.push('Некорректная запись потребительской покупки');
+  if (ecosystem.regulation.obligations.some((obligation) => obligation.amount < 0)) violations.push('Отрицательное акцизное обязательство');
+  if (ecosystem.regulation.payments.some((payment) => payment.amount <= 0)) violations.push('Некорректная регуляторная оплата');
+  const licenseIds = new Set(ecosystem.regulation.licenses.map((license) => license.id));
+  if (licenseIds.size !== ecosystem.regulation.licenses.length) violations.push('Дублирующиеся регуляторные лицензии');
   return {
     state,
     report: {
@@ -96,6 +110,11 @@ export function runObserverSimulation(initial: GameState, days: number, options:
       traceNodes: ecosystem.kernel.traceability.length,
       demandRegionCount: ecosystem.demand.regions.length,
       consumerPurchases: ecosystem.demand.purchases.length,
+      regulatoryAuthorities: ecosystem.regulation.authorities.length,
+      activeLicenses: ecosystem.regulation.licenses.filter((license) => license.status === 'active').length,
+      exciseObligations: ecosystem.regulation.obligations.length,
+      regulatoryPayments: ecosystem.regulation.payments.length,
+      openRegulatoryViolations: ecosystem.regulation.violations.filter((violation) => !violation.resolved).length,
       finalPlayerCash: state.finance.cash,
       violations,
     },

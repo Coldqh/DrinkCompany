@@ -21,6 +21,10 @@ describe('observer simulation', () => {
     expect(result.report.goodsEntries).toBeGreaterThan(0);
     expect(result.report.demandRegionCount).toBe(6);
     expect(result.report.consumerPurchases).toBeGreaterThan(0);
+    expect(result.report.regulatoryAuthorities).toBe(3);
+    expect(result.report.activeLicenses).toBeGreaterThan(0);
+    expect(result.report.exciseObligations).toBeGreaterThan(0);
+    expect(result.report.regulatoryPayments).toBeGreaterThan(0);
     expect(result.report.violations).toEqual([]);
   });
 });

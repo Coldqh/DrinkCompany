@@ -30,6 +30,7 @@ export function CompanyCenter({ game, version }: CompanyCenterProps) {
           <Detail label="Производство" value={formatMoney(state.finance.productionSpend)} />
           <Detail label="Сырьё" value={formatMoney(state.finance.supplySpend)} />
           <Detail label="Команда" value={formatMoney(state.finance.teamSpend)} />
+          <Detail label="Налоги и акциз" value={formatMoney(state.finance.taxSpend)} />
           <Detail label="Объекты" value={formatMoney(state.finance.facilitySpend + state.finance.retailSpend)} />
         </div>
       </div>}

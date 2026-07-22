@@ -21,7 +21,8 @@ import type { MarketOutletState } from './market';
 import { suppliers } from '../data/supplyCatalog';
 import { advanceTradeDay, createTradeState, normalizeTradeState, type TradeState } from './trade';
 import { advanceDemandDay, createDemandState, normalizeDemandState, type DemandState } from './demand';
-import { advanceKernelDay, createEcosystemKernel, normalizeEcosystemKernel, synchronizeKernelFromTrade, type EcosystemKernelState } from './kernel';
+import { advanceRegulationDay, createRegulationState, normalizeRegulationState, type RegulationState } from './regulation';
+import { advanceKernelDay, createEcosystemKernel, normalizeEcosystemKernel, synchronizeKernelFromRegulation, synchronizeKernelFromTrade, type EcosystemKernelState } from './kernel';
 import {
   advanceWorldIntelligence,
   createWorldIntelligenceState,
@@ -128,6 +129,7 @@ export interface EcosystemState {
   demand: DemandState;
   intelligence: WorldIntelligenceState;
   kernel: EcosystemKernelState;
+  regulation: RegulationState;
 }
 
 export interface EcosystemAdvanceResult {
@@ -135,6 +137,7 @@ export interface EcosystemAdvanceResult {
   playerRevenue: number;
   playerUnitsSold: number;
   playerOperatingCost: number;
+  playerTaxPaid: number;
   reports: RetailDayReport[];
   events: { title: string; detail: string; tone: 'market' | 'warning' | 'release' }[];
 }
@@ -372,6 +375,7 @@ export function createEcosystemState(input: {
   const assets = [playerAsset, ...producerAssets, ...supplierAssets, ...outletAssets, ...vacantAssets];
   const trade = createTradeState(organizations, assets, input.day);
   const demand = createDemandState(input.day, `${input.playerCompanyName}:${input.countryId}:${input.regionId}`);
+  const regulation = createRegulationState(organizations, assets, trade, input.day);
   const kernel = createEcosystemKernel({
     day: input.day,
     seedText: `${input.playerCompanyName}:${input.countryId}:${input.regionId}`,
@@ -379,6 +383,7 @@ export function createEcosystemState(input: {
     assets,
     trade,
     demand,
+    regulation,
   });
   return {
     playerOrganizationId,
@@ -397,6 +402,7 @@ export function createEcosystemState(input: {
     demand,
     intelligence: createWorldIntelligenceState(organizations, input.day),
     kernel,
+    regulation,
   };
 }
 
@@ -457,6 +463,7 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
     ? normalizeTradeState(state.trade)
     : createTradeState(state.organizations, state.assets, day);
   const demand = normalizeDemandState(state.demand, day, `${state.playerOrganizationId}:${state.organizations.length}:${state.assets.length}`);
+  const regulation = normalizeRegulationState(state.regulation, state.organizations, state.assets, trade, day);
   const kernel = normalizeEcosystemKernel(state.kernel, {
     day,
     seedText: `${state.playerOrganizationId}:${state.organizations.length}:${state.assets.length}`,
@@ -464,6 +471,7 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
     assets: state.assets,
     trade,
     demand,
+    regulation,
   });
   return {
     ...state,
@@ -471,6 +479,7 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
     trade,
     demand,
     kernel,
+    regulation,
     intelligence: normalizeWorldIntelligenceState(state.intelligence, state.organizations, day),
   };
 }
@@ -718,7 +727,7 @@ export function controlledVenueStockLimit(asset: WorldAssetState): number {
   return asset.venue ? retailStockLimit(asset.venue) : 0;
 }
 
-export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, batches: BatchState[], day: number, staffBoost: number): EcosystemAdvanceResult {
+export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, batches: BatchState[], day: number, staffBoost: number, playerCash = 0): EcosystemAdvanceResult {
   const demand = advanceDemandDay(state.demand, day);
   const retailAdvance = advanceRetailDay(stateToRetail(state), brand, batches, day, staffBoost, {
     demand,
@@ -730,6 +739,9 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   const tradeAdvance = advanceTradeDay(ecosystem.trade, ecosystem.organizations, ecosystem.assets, day, ecosystem.demand);
   ecosystem = { ...ecosystem, trade: tradeAdvance.trade, demand: tradeAdvance.demand, organizations: tradeAdvance.organizations };
   events.push(...tradeAdvance.events);
+  const regulationAdvance = advanceRegulationDay(ecosystem.regulation, ecosystem.organizations, ecosystem.assets, ecosystem.trade, day, { organizationId: ecosystem.playerOrganizationId, cash: playerCash });
+  ecosystem = { ...ecosystem, regulation: regulationAdvance.regulation, organizations: regulationAdvance.organizations };
+  events.push(...regulationAdvance.events);
 
   let organizations = ecosystem.organizations.map((organization) => {
     if (organization.id === ecosystem.playerOrganizationId) {
@@ -810,20 +822,25 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   ecosystem = { ...ecosystem, organizations, assets, transactions, nextTransactionNumber };
   ecosystem = {
     ...ecosystem,
-    kernel: synchronizeKernelFromTrade(
-      advanceKernelDay(
-        normalizeEcosystemKernel(ecosystem.kernel, {
+    kernel: synchronizeKernelFromRegulation(
+      synchronizeKernelFromTrade(
+        advanceKernelDay(
+          normalizeEcosystemKernel(ecosystem.kernel, {
+            day,
+            seedText: `${ecosystem.playerOrganizationId}:${ecosystem.organizations.length}:${ecosystem.assets.length}`,
+            organizations: ecosystem.organizations,
+            assets: ecosystem.assets,
+            trade: ecosystem.trade,
+            demand: ecosystem.demand,
+            regulation: ecosystem.regulation,
+          }),
           day,
-          seedText: `${ecosystem.playerOrganizationId}:${ecosystem.organizations.length}:${ecosystem.assets.length}`,
-          organizations: ecosystem.organizations,
-          assets: ecosystem.assets,
-          trade: ecosystem.trade,
-        }),
-        day,
+          ecosystem.trade,
+        ),
         ecosystem.trade,
+        day,
       ),
-      ecosystem.trade,
-      day,
+      ecosystem.regulation,
     ),
   };
   const intelligenceAdvance = advanceWorldIntelligence(ecosystem, day);
@@ -834,6 +851,7 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
     playerRevenue: roundMoney(retailAdvance.revenue + dividend),
     playerUnitsSold: retailAdvance.unitsSold,
     playerOperatingCost: playerCost,
+    playerTaxPaid: regulationAdvance.playerTaxPaid,
     reports: retailAdvance.reports,
     events,
   };
