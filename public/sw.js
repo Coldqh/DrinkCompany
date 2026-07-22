@@ -1,4 +1,4 @@
-const VERSION = '0.15.0';
+const VERSION = '0.16.0';
 const CACHE_NAME = `drink-company-${VERSION}`;
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './version.json'];
 

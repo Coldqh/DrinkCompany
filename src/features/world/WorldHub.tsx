@@ -15,6 +15,7 @@ import {
   type WorldAssetState,
 } from '../../domain/ecosystem';
 import { commodityName, inventoryQuantity, productFamilyLabel, type TradeProductState } from '../../domain/trade';
+import { regionDemandSummary } from '../../domain/demand';
 import { leaderRoleLabel, strategyLabel } from '../../domain/worldIntelligence';
 import type { RetailVenueStatus, RetailVenueType } from '../../domain/retail';
 import { Icon } from '../../ui/Icon';
@@ -55,6 +56,8 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
   const saleAssets = commercialAssets.filter((asset) => asset.status === 'for_sale' || asset.status === 'vacant').length;
   const strainedOrganizations = organizations.filter((organization) => ['strained', 'insolvent'].includes(organization.status)).length;
   const activeShipments = ecosystem.trade.shipments.filter((shipment) => shipment.status === 'in_transit' || shipment.status === 'delayed').length;
+  const playerOrganization = ecosystem.organizations.find((organization) => organization.id === ecosystem.playerOrganizationId);
+  const localDemand = regionDemandSummary(ecosystem.demand, playerOrganization?.regionId ?? '');
   const bottlenecks = ecosystem.trade.contracts.filter((contract) => contract.failures > 0).length
     + ecosystem.trade.batches.filter((batch) => batch.status === 'blocked').length
     + ecosystem.trade.shelves.filter((listing) => listing.units <= 0).length;
@@ -77,7 +80,7 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
       <CompactHeader
         kicker="Мир"
         title="Объекты и организации"
-        meta={`${organizations.length} компаний · ${controlledAssets.length} активов под контролем`}
+        meta={`${localDemand.headline} · ${localDemand.detail}`}
       />
 
       <SubTabs value={section} onChange={setSection} options={[
@@ -310,6 +313,7 @@ function AssetModal({ asset, owner, ecosystem, cash, controlled, onClose, onAcqu
     }>
       <div className="asset-identity"><span className="ecosystem-glyph large"><Icon name={asset.type === 'bar' ? 'beer' : asset.type === 'shop' ? 'store' : 'map'} /></span><div><strong>{asset.address}</strong><small>{asset.audience}</small></div></div>
       <div className="detail-grid"><Detail label="Владелец" value={owner?.name ?? 'Частный собственник'} /><Detail label="Статус владельца" value={owner ? statusLabel(owner.status) : 'частный'} /><Detail label="Состояние" value={`${Math.round(asset.condition)}/100`} /><Detail label="Поток" value={`${asset.footfall}/100`} /><Detail label="Аренда" value={`${formatMoney(asset.dailyRent)}/д`} /><Detail label="Оценка" value={formatMoney(asset.askingPrice)} /></div>
+      {(() => { const summary = regionDemandSummary(ecosystem.demand, asset.regionId); const region = ecosystem.demand.regions.find((item) => item.regionId === asset.regionId); const lead = region?.segments.slice().sort((a, b) => b.adults - a.adults)[0]; return <div className="organization-intelligence"><span>Локальный спрос</span><strong>{summary.headline}</strong><small>{summary.detail}{lead ? ` · крупнейший сегмент: ${lead.name}` : ''}</small></div>; })()}
       {(asset.type === 'bar' || asset.type === 'shop') && <div className="organization-assets"><span>Товарный оборот</span>{ecosystem.trade.shelves.filter((listing) => listing.assetId === asset.id).length === 0 ? <small>На полках нет товаров экосистемы.</small> : ecosystem.trade.shelves.filter((listing) => listing.assetId === asset.id).map((listing) => { const product = ecosystem.trade.products.find((item) => item.id === listing.productId); return <div key={listing.id}><strong>{product?.name ?? 'Неизвестный продукт'}</strong><small>{listing.units} на полке · сегодня {listing.unitsSoldToday} · всего {listing.totalUnitsSold}</small></div>; })}{ecosystem.trade.shipments.filter((shipment) => shipment.buyerAssetId === asset.id && (shipment.status === 'in_transit' || shipment.status === 'delayed')).map((shipment) => <div key={shipment.id}><strong>В пути: {commodityName(ecosystem.trade, shipment.commodityKind, shipment.commodityId)}</strong><small>{shipment.quantity} ед. · прибытие день {shipment.arrivalDay}</small></div>)}</div>}
       {asset.status === 'vacant' && <div className="lease-builder"><span>Что открыть</span><div className="choice-pills"><button className={type === 'bar' ? 'active' : ''} onClick={() => setType('bar')}>Бар</button><button className={type === 'shop' ? 'active' : ''} onClick={() => setType('shop')}>Магазин</button></div><label className="field"><span>Название оператора</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={36} /></label><small>Ты арендуешь конкретное помещение. Собственник, депозит и ежедневная аренда остаются частью мира.</small></div>}
     </Modal>

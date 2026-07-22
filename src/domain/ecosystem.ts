@@ -20,6 +20,7 @@ import {
 import type { MarketOutletState } from './market';
 import { suppliers } from '../data/supplyCatalog';
 import { advanceTradeDay, createTradeState, normalizeTradeState, type TradeState } from './trade';
+import { advanceDemandDay, createDemandState, normalizeDemandState, type DemandState } from './demand';
 import { advanceKernelDay, createEcosystemKernel, normalizeEcosystemKernel, synchronizeKernelFromTrade, type EcosystemKernelState } from './kernel';
 import {
   advanceWorldIntelligence,
@@ -124,6 +125,7 @@ export interface EcosystemState {
   nextRetailStockNumber: number;
   nextRetailReportNumber: number;
   trade: TradeState;
+  demand: DemandState;
   intelligence: WorldIntelligenceState;
   kernel: EcosystemKernelState;
 }
@@ -369,12 +371,14 @@ export function createEcosystemState(input: {
   const organizations = [player, ...companyOrganizations, ...supplierOrganizations, ...outletOrganizations, ...landlordOrganizations];
   const assets = [playerAsset, ...producerAssets, ...supplierAssets, ...outletAssets, ...vacantAssets];
   const trade = createTradeState(organizations, assets, input.day);
+  const demand = createDemandState(input.day, `${input.playerCompanyName}:${input.countryId}:${input.regionId}`);
   const kernel = createEcosystemKernel({
     day: input.day,
     seedText: `${input.playerCompanyName}:${input.countryId}:${input.regionId}`,
     organizations,
     assets,
     trade,
+    demand,
   });
   return {
     playerOrganizationId,
@@ -390,6 +394,7 @@ export function createEcosystemState(input: {
     nextRetailStockNumber: 1,
     nextRetailReportNumber: 1,
     trade,
+    demand,
     intelligence: createWorldIntelligenceState(organizations, input.day),
     kernel,
   };
@@ -451,17 +456,20 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
   const trade = state.trade && Array.isArray(state.trade.products)
     ? normalizeTradeState(state.trade)
     : createTradeState(state.organizations, state.assets, day);
+  const demand = normalizeDemandState(state.demand, day, `${state.playerOrganizationId}:${state.organizations.length}:${state.assets.length}`);
   const kernel = normalizeEcosystemKernel(state.kernel, {
     day,
     seedText: `${state.playerOrganizationId}:${state.organizations.length}:${state.assets.length}`,
     organizations: state.organizations,
     assets: state.assets,
     trade,
+    demand,
   });
   return {
     ...state,
     subsidiaries: state.subsidiaries ?? [],
     trade,
+    demand,
     kernel,
     intelligence: normalizeWorldIntelligenceState(state.intelligence, state.organizations, day),
   };
@@ -711,12 +719,16 @@ export function controlledVenueStockLimit(asset: WorldAssetState): number {
 }
 
 export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, batches: BatchState[], day: number, staffBoost: number): EcosystemAdvanceResult {
-  const retailAdvance = advanceRetailDay(stateToRetail(state), brand, batches, day, staffBoost);
-  let ecosystem = mergeRetailState({ ...state, trade: normalizeTradeState(state.trade) }, retailAdvance.retail);
+  const demand = advanceDemandDay(state.demand, day);
+  const retailAdvance = advanceRetailDay(stateToRetail(state), brand, batches, day, staffBoost, {
+    demand,
+    footfallByVenueId: Object.fromEntries(state.assets.filter((asset) => asset.venue).map((asset) => [asset.id, asset.footfall])),
+  });
+  let ecosystem = mergeRetailState({ ...state, demand: retailAdvance.demand ?? demand, trade: normalizeTradeState(state.trade) }, retailAdvance.retail);
   const events: EcosystemAdvanceResult['events'] = [];
   const playerCost = ecosystemPlayerDailyCost(ecosystem);
-  const tradeAdvance = advanceTradeDay(ecosystem.trade, ecosystem.organizations, ecosystem.assets, day);
-  ecosystem = { ...ecosystem, trade: tradeAdvance.trade, organizations: tradeAdvance.organizations };
+  const tradeAdvance = advanceTradeDay(ecosystem.trade, ecosystem.organizations, ecosystem.assets, day, ecosystem.demand);
+  ecosystem = { ...ecosystem, trade: tradeAdvance.trade, demand: tradeAdvance.demand, organizations: tradeAdvance.organizations };
   events.push(...tradeAdvance.events);
 
   let organizations = ecosystem.organizations.map((organization) => {

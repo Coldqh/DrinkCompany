@@ -19,6 +19,8 @@ describe('observer simulation', () => {
     expect(result.report.organizationCount).toBeGreaterThan(10);
     expect(result.report.productCount).toBeGreaterThan(0);
     expect(result.report.goodsEntries).toBeGreaterThan(0);
+    expect(result.report.demandRegionCount).toBe(6);
+    expect(result.report.consumerPurchases).toBeGreaterThan(0);
     expect(result.report.violations).toEqual([]);
   });
 });

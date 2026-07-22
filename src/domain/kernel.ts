@@ -1,6 +1,6 @@
 import { beverageBlueprints, type BeverageCategoryId } from '../data/beverageCatalog';
 
-export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe';
+export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment';
 export type LedgerAccount = `org:${string}:cash` | `org:${string}:revenue` | `org:${string}:expense` | `system:${string}`;
 export type ScheduleCadence = 'daily' | 'weekly' | 'monthly' | 'seasonal' | 'annual' | 'once';
 
@@ -28,7 +28,7 @@ export interface KernelEntityRef {
   ownerOrganizationId: string | null;
   countryId: string | null;
   regionId: string | null;
-  sourceModule: 'ecosystem' | 'trade' | 'catalog';
+  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand';
 }
 
 export interface KernelProductSpecification {
@@ -131,17 +131,28 @@ export interface EcosystemKernelState {
   nextScheduleNumber: number;
 }
 
+
+export interface KernelDemandSnapshot {
+  regions: Array<{
+    regionId: string;
+    countryId: string;
+    population: number;
+    segments: Array<{ id: string; name: string }>;
+  }>;
+}
+
 export interface KernelCreateInput {
   day: number;
   seedText: string;
   organizations: KernelOrganizationInput[];
   assets: KernelAssetInput[];
   trade: KernelTradeSnapshot;
+  demand?: KernelDemandSnapshot;
 }
 
 export function createEcosystemKernel(input: KernelCreateInput): EcosystemKernelState {
   const seed = hashSeed(input.seedText);
-  const entities = buildEntityRegistry(input.organizations, input.assets, input.trade);
+  const entities = buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand);
   const productSpecifications = input.trade.products.map((product) => createProductSpecification(product, input.day));
   const traceability = input.trade.inventory.map((lot, index) => ({
     id: `trace-${index + 1}`,
@@ -177,7 +188,7 @@ export function normalizeEcosystemKernel(kernel: EcosystemKernelState | undefine
   const traceability = mergeTraceability(kernel.traceability ?? [], input.trade.inventory, input.day);
   const normalized: EcosystemKernelState = {
     ...kernel,
-    entities: buildEntityRegistry(input.organizations, input.assets, input.trade),
+    entities: buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand),
     productSpecifications: mergeProductSpecifications(kernel.productSpecifications ?? [], input.trade.products, input.day),
     moneyLedger: kernel.moneyLedger ?? [],
     goodsLedger: kernel.goodsLedger ?? [],
@@ -361,13 +372,17 @@ export function nextRandom(state: number): { state: number; value: number } {
   return { state: next || 1, value: next / 0x1_0000_0000 };
 }
 
-function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: KernelAssetInput[], trade: KernelTradeSnapshot): KernelEntityRef[] {
+function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: KernelAssetInput[], trade: KernelTradeSnapshot, demand?: KernelDemandSnapshot): KernelEntityRef[] {
   const entities: KernelEntityRef[] = [];
   for (const organization of organizations) entities.push({ id: organization.id, kind: 'organization', label: organization.name, ownerOrganizationId: organization.id, countryId: organization.countryId, regionId: organization.regionId, sourceModule: 'ecosystem' });
   for (const asset of assets) entities.push({ id: asset.id, kind: 'asset', label: asset.type, ownerOrganizationId: asset.ownerOrganizationId, countryId: asset.countryId, regionId: asset.regionId, sourceModule: 'ecosystem' });
   for (const product of trade.products) entities.push({ id: product.id, kind: 'product', label: product.name, ownerOrganizationId: product.producerOrganizationId, countryId: null, regionId: null, sourceModule: 'trade' });
   for (const lot of trade.inventory) entities.push({ id: lot.id, kind: 'lot', label: lot.commodityId, ownerOrganizationId: lot.organizationId, countryId: null, regionId: null, sourceModule: 'trade' });
   for (const contract of trade.contracts) entities.push({ id: contract.id, kind: 'contract', label: `${contract.commodityKind}:${contract.commodityId}`, ownerOrganizationId: contract.sellerOrganizationId, countryId: null, regionId: null, sourceModule: 'trade' });
+  for (const region of demand?.regions ?? []) {
+    entities.push({ id: `region:${region.regionId}`, kind: 'region', label: region.regionId, ownerOrganizationId: null, countryId: region.countryId, regionId: region.regionId, sourceModule: 'demand' });
+    for (const segment of region.segments) entities.push({ id: segment.id, kind: 'consumer_segment', label: segment.name, ownerOrganizationId: null, countryId: region.countryId, regionId: region.regionId, sourceModule: 'demand' });
+  }
   return deduplicateEntities(entities);
 }
 

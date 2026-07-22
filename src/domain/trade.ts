@@ -1,6 +1,7 @@
 import { ingredients, supplierOffers, type IngredientUnit } from '../data/supplyCatalog';
 import type { BeverageCategoryId } from '../data/beverageCatalog';
 import type { OrganizationState, WorldAssetState } from './ecosystem';
+import { calculateShelfDemand, recordConsumerPurchase, type DemandState } from './demand';
 
 export type TradeCommodityKind = 'ingredient' | 'product';
 export type TradeProductFamily = 'beer' | 'cider' | 'wine' | 'spirit' | 'liqueur' | 'alcohol_free';
@@ -134,6 +135,7 @@ export interface TradeState {
 
 export interface TradeAdvanceResult {
   trade: TradeState;
+  demand: DemandState;
   organizations: OrganizationState[];
   events: { title: string; detail: string; tone: 'market' | 'warning' | 'release' }[];
 }
@@ -277,8 +279,9 @@ export function createTradeState(organizations: OrganizationState[], assets: Wor
   };
 }
 
-export function advanceTradeDay(state: TradeState, organizations: OrganizationState[], assets: WorldAssetState[], day: number): TradeAdvanceResult {
+export function advanceTradeDay(state: TradeState, organizations: OrganizationState[], assets: WorldAssetState[], day: number, demand: DemandState): TradeAdvanceResult {
   let trade = normalizeTradeState(state);
+  let nextDemand = demand;
   let nextOrganizations = organizations.map((organization) => ({ ...organization, dailyRevenue: 0, dailyCosts: baseOperatingCost(organization) }));
   const events: TradeAdvanceResult['events'] = [];
   const revenue = new Map<string, number>();
@@ -379,15 +382,38 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
       }
       return { ...listing, unitsSoldToday: 0, revenueToday: 0, stockoutDays };
     }
-    const pricePressure = clamp(product.recommendedRetailPrice / Math.max(.5, listing.retailPrice), .45, 1.25);
-    const appeal = clamp((product.quality / 100) * .55 + pricePressure * .3 + operator.reputation / 100 * .15, .25, 1.25);
-    const demand = Math.max(0, Math.round((asset.footfall / 16) * appeal + (hash(`${listing.id}-${day}`) % 5) - 2));
-    const sold = Math.min(listing.units, demand);
+    const demandResult = calculateShelfDemand(nextDemand, {
+      day,
+      regionId: asset.regionId,
+      assetId: asset.id,
+      assetType: asset.type,
+      assetFootfall: asset.footfall,
+      productId: product.id,
+      beverageCategoryId: product.beverageCategoryId ?? legacyCategoryForFamily(product.family),
+      quality: product.quality,
+      retailPrice: listing.retailPrice,
+      referencePrice: product.recommendedRetailPrice,
+      organizationReputation: operator.reputation,
+    });
+    const sold = Math.min(listing.units, demandResult.units);
     const saleRevenue = roundMoney(sold * listing.retailPrice);
     if (sold > 0) {
       addMoneyDelta(revenue, operator.id, saleRevenue);
       product.totalSold += sold;
-      record('sale', operator.id, product.producerOrganizationId, asset.id, `${asset.name} продала ${product.name}`, `${sold} бутылок ушли конечным покупателям.`, saleRevenue);
+      nextDemand = recordConsumerPurchase(nextDemand, {
+        day,
+        regionId: asset.regionId,
+        assetId: asset.id,
+        productId: product.id,
+        categoryId: product.beverageCategoryId ?? legacyCategoryForFamily(product.family),
+        channel: demandResult.channel,
+        units: sold,
+        unitPrice: listing.retailPrice,
+        revenue: saleRevenue,
+        primarySegmentId: demandResult.primarySegmentId,
+        occasion: demandResult.occasion,
+      });
+      record('sale', operator.id, product.producerOrganizationId, asset.id, `${asset.name} продала ${product.name}`, `${sold} бутылок купила аудитория «${demandResult.primarySegmentId}» (${demandResult.occasion}).`, saleRevenue);
     }
     return {
       ...listing,
@@ -563,7 +589,7 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
   trade.inventory = trade.inventory.filter((lot) => lot.quantity > .001 && (lot.expiresDay === null || lot.expiresDay >= day));
   trade.shipments = trade.shipments.slice(-180);
   trade.batches = trade.batches.slice(-120);
-  return { trade, organizations: nextOrganizations, events };
+  return { trade, demand: nextDemand, organizations: nextOrganizations, events };
 }
 
 export function normalizeTradeState(value: TradeState | null | undefined): TradeState {

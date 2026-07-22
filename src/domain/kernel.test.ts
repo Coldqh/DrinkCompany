@@ -10,6 +10,7 @@ const input = {
     { id: 'org-b', name: 'B', countryId: 'de', regionId: 'he' },
   ],
   assets: [{ id: 'asset-a', ownerOrganizationId: 'org-a', operatorOrganizationId: 'org-a', countryId: 'de', regionId: 'he', type: 'production' }],
+  demand: { regions: [{ regionId: 'he', countryId: 'de', population: 1000, segments: [{ id: 'segment-he-urban', name: 'Urban' }] }] },
   trade: {
     products: [{ id: 'product-a', producerOrganizationId: 'org-a', name: 'Bottle A', family: 'spirit', beverageCategoryId: 'gin' }],
     inventory: [{ id: 'lot-a', organizationId: 'org-a', commodityKind: 'ingredient', commodityId: 'juniper', quantity: 10, unit: 'kg', originOrganizationId: 'org-a' }],
@@ -27,6 +28,8 @@ describe('ecosystem kernel', () => {
   it('creates one registry and maps legacy products to generic beverage specifications', () => {
     const kernel = createEcosystemKernel(input);
     expect(kernel.entities.some((entity) => entity.id === 'org-a' && entity.kind === 'organization')).toBe(true);
+    expect(kernel.entities.some((entity) => entity.id === 'region:he' && entity.kind === 'region')).toBe(true);
+    expect(kernel.entities.some((entity) => entity.id === 'segment-he-urban' && entity.kind === 'consumer_segment')).toBe(true);
     expect(kernel.productSpecifications[0]?.beverageCategoryId).toBe('gin');
     expect(auditKernel(kernel, input.trade).violations).toEqual([]);
   });

@@ -12,6 +12,8 @@ export interface ObserverSimulationReport {
   moneyEntries: number;
   goodsEntries: number;
   traceNodes: number;
+  demandRegionCount: number;
+  consumerPurchases: number;
   finalPlayerCash: number;
   violations: string[];
 }
@@ -63,6 +65,8 @@ export function runObserverSimulation(initial: GameState, days: number, options:
         moneyEntries: 0,
         goodsEntries: 0,
         traceNodes: 0,
+        demandRegionCount: 0,
+        consumerPurchases: 0,
         finalPlayerCash: state.finance.cash,
         violations: state.phase === 'operating' ? ['Operating state has no ecosystem'] : [],
       },
@@ -75,6 +79,8 @@ export function runObserverSimulation(initial: GameState, days: number, options:
   if (organizationIds.size !== ecosystem.organizations.length) violations.push('Дублирующиеся организации в EcosystemState');
   if (assetIds.size !== ecosystem.assets.length) violations.push('Дублирующиеся объекты в EcosystemState');
   if (ecosystem.trade.inventory.some((lot) => lot.quantity < 0)) violations.push('Обнаружен отрицательный товарный остаток');
+  if (ecosystem.demand.regions.some((region) => region.population <= 0 || region.adultPopulation <= 0)) violations.push('Некорректное население региона');
+  if (ecosystem.demand.purchases.some((purchase) => purchase.units <= 0 || purchase.revenue < 0)) violations.push('Некорректная запись потребительской покупки');
   return {
     state,
     report: {
@@ -88,6 +94,8 @@ export function runObserverSimulation(initial: GameState, days: number, options:
       moneyEntries: ecosystem.kernel.moneyLedger.length,
       goodsEntries: ecosystem.kernel.goodsLedger.length,
       traceNodes: ecosystem.kernel.traceability.length,
+      demandRegionCount: ecosystem.demand.regions.length,
+      consumerPurchases: ecosystem.demand.purchases.length,
       finalPlayerCash: state.finance.cash,
       violations,
     },

@@ -1,6 +1,7 @@
 import type { ProductRelease, BrandState } from './brand';
 import type { BatchState } from './production';
 import { averageQuality } from './production';
+import { calculateShelfDemand, recordConsumerPurchase, type DemandState, type ShelfDemandResult } from './demand';
 
 export type RetailVenueType = 'bar' | 'shop';
 export type RetailVenueStatus = 'open' | 'closed';
@@ -62,8 +63,15 @@ export interface RetailState {
   directUnitsSold: number;
 }
 
+
+export interface RetailDemandContext {
+  demand: DemandState;
+  footfallByVenueId: Record<string, number>;
+}
+
 export interface RetailAdvanceResult {
   retail: RetailState;
+  demand?: DemandState;
   revenue: number;
   unitsSold: number;
   reports: RetailDayReport[];
@@ -171,7 +179,8 @@ export function setRetailVenueStatus(retail: RetailState, venueId: string, statu
   return { ...retail, venues: retail.venues.map((item) => item.id === venueId ? { ...item, status } : item) };
 }
 
-export function advanceRetailDay(retail: RetailState, brand: BrandState, batches: BatchState[], day: number, staffBonus = 0): RetailAdvanceResult {
+export function advanceRetailDay(retail: RetailState, brand: BrandState, batches: BatchState[], day: number, staffBonus = 0, demandContext?: RetailDemandContext): RetailAdvanceResult {
+  let nextDemand = demandContext?.demand;
   let totalRevenue = 0;
   let totalUnits = 0;
   const newReports: RetailDayReport[] = [];
@@ -201,7 +210,7 @@ export function advanceRetailDay(retail: RetailState, brand: BrandState, batches
     const weighted = activeStock.map((stock) => {
       const release = brand.releases.find((item) => item.id === stock.releaseId);
       const batch = batches.find((item) => item.id === stock.batchId);
-      if (!release || !batch) return { stock, score: 0, satisfaction: 30 };
+      if (!release || !batch) return { stock, score: 0, satisfaction: 30, demandResult: null, batch: null };
       const quality = averageQuality(batch.quality);
       const channelFit = venue.type === 'bar'
         ? (release.positioning === 'bar' ? 15 : release.positioning === 'experimental' || release.positioning === 'local' ? 8 : 0)
@@ -209,7 +218,20 @@ export function advanceRetailDay(retail: RetailState, brand: BrandState, batches
       const pricePressure = Math.max(0, (stock.price - release.retailPrice) / Math.max(0.1, release.retailPrice) * 36);
       const score = clamp(quality * 0.42 + release.awareness * 0.2 + release.visualAppeal * 0.12 + release.audienceClarity * 0.1 + channelFit + venue.reputation * 0.09 - pricePressure - batch.quality.defectRisk * 0.08, 1, 100);
       const satisfaction = clamp(Math.round(quality * 0.62 + release.visualAppeal * 0.12 + release.audienceClarity * 0.1 + channelFit * 0.5 - pricePressure * 0.7 - batch.quality.defectRisk * 0.12), 20, 98);
-      return { stock, score, satisfaction };
+      const demandResult: ShelfDemandResult | null = nextDemand ? calculateShelfDemand(nextDemand, {
+        day,
+        regionId: venue.regionId,
+        assetId: venue.id,
+        assetType: venue.type,
+        assetFootfall: demandContext?.footfallByVenueId[venue.id] ?? visitorPotential,
+        productId: release.id,
+        beverageCategoryId: batch.recipe.family,
+        quality,
+        retailPrice: stock.price,
+        referencePrice: release.retailPrice,
+        organizationReputation: venue.reputation,
+      }) : null;
+      return { stock, score, satisfaction, demandResult, batch };
     });
     const scoreTotal = Math.max(1, weighted.reduce((sum, item) => sum + item.score, 0));
     const purchaseRate = clamp(0.38 + venue.reputation / 250 + venue.cleanliness / 500 + staffBonus / 90, 0.25, 0.88);
@@ -220,12 +242,27 @@ export function advanceRetailDay(retail: RetailState, brand: BrandState, batches
       if (!item || remainingDemand <= 0 || stockItem.units <= 0) return stockItem;
       const share = item.score / scoreTotal;
       const deterministic = ((day + stockItem.id.length + venue.id.length) % 3) - 1;
-      const desired = Math.max(0, Math.round(visitorPotential * purchaseRate * share) + deterministic);
+      const desired = item.demandResult
+        ? Math.max(0, Math.round(item.demandResult.units * clamp(item.score / 72, .45, 1.35)))
+        : Math.max(0, Math.round(visitorPotential * purchaseRate * share) + deterministic);
       const units = Math.min(stockItem.units, Math.min(remainingDemand, desired));
       if (units <= 0) return stockItem;
       remainingDemand -= units;
       const revenue = roundMoney(units * stockItem.price);
       lines.push({ releaseId: stockItem.releaseId, batchId: stockItem.batchId, units, unitPrice: stockItem.price, revenue, satisfaction: item.satisfaction });
+      if (nextDemand && item.demandResult) nextDemand = recordConsumerPurchase(nextDemand, {
+        day,
+        regionId: venue.regionId,
+        assetId: venue.id,
+        productId: stockItem.releaseId,
+        categoryId: item.batch?.recipe.family ?? 'beer',
+        channel: item.demandResult.channel,
+        units,
+        unitPrice: stockItem.price,
+        revenue,
+        primarySegmentId: item.demandResult.primarySegmentId,
+        occasion: item.demandResult.occasion,
+      });
       return { ...stockItem, units: stockItem.units - units };
     });
     const unitsSold = lines.reduce((sum, line) => sum + line.units, 0);
@@ -259,6 +296,7 @@ export function advanceRetailDay(retail: RetailState, brand: BrandState, batches
   });
 
   return {
+    demand: nextDemand,
     retail: {
       ...retail,
       venues,

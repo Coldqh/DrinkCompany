@@ -249,7 +249,7 @@ export interface TutorialState {
 }
 
 export interface GameState {
-  schemaVersion: 14;
+  schemaVersion: 15;
   phase: GamePhase;
   mode: GameMode;
   day: number;
@@ -358,7 +358,7 @@ export const STARTING_CASH: Record<GameMode, number> = {
 export function createInitialState(now = new Date()): GameState {
   const timestamp = now.toISOString();
   return {
-    schemaVersion: 14,
+    schemaVersion: 15,
     phase: 'onboarding',
     mode: 'standard',
     day: 1,
@@ -403,7 +403,7 @@ export function startCompany(selection: NewGameSelection, now = new Date()): Gam
     day: 1,
   });
   return {
-    schemaVersion: 14,
+    schemaVersion: 15,
     phase: 'operating',
     mode: selection.mode,
     day: 1,
@@ -1180,7 +1180,7 @@ export function migrateGameState(value: unknown): GameState {
   if (!value || typeof value !== 'object') return createInitialState();
   const raw = value as Record<string, unknown>;
   const version = typeof raw.schemaVersion === 'number' ? raw.schemaVersion : 0;
-  if (version < 1 || version > 14) return createInitialState();
+  if (version < 1 || version > 15) return createInitialState();
 
   const day = typeof raw.day === 'number' ? raw.day : 1;
   const phase: GamePhase = raw.phase === 'operating' ? 'operating' : 'onboarding';
@@ -1217,7 +1217,7 @@ export function migrateGameState(value: unknown): GameState {
   const timestamp = new Date().toISOString();
 
   return normalizeCurrentState({
-    schemaVersion: 14,
+    schemaVersion: 15,
     phase,
     mode,
     day,
@@ -1273,7 +1273,7 @@ function normalizeCurrentState(state: GameState): GameState {
   } : null;
   return {
     ...state,
-    schemaVersion: 14,
+    schemaVersion: 15,
     finance: {
       ...state.finance,
       salesRevenue: state.finance.salesRevenue ?? 0,
@@ -1485,33 +1485,8 @@ function advanceWorld(world: WorldState, batches: BatchState[], companyReputatio
   let releases = world.releases;
   let demandSignals = world.demandSignals;
 
-  if (day % 3 === 0) {
-    demandSignals = demandSignals.map((signal, index) => {
-      const marketPressure = companies.reduce((sum, company) => sum + (companyFamily(company) === signal.family ? company.momentum - 50 : 0), 0) / Math.max(1, companies.length);
-      const cycle = ((day + index * 5) % 9) - 4;
-      const shift = Math.round(cycle * 0.7 + marketPressure * 0.035);
-      const indexValue = clamp(signal.index + shift, 18, 88);
-      const trend = shift >= 2 ? 'rising' : shift <= -2 ? 'falling' : 'stable';
-      return {
-        ...signal,
-        index: indexValue,
-        trend,
-        confidence: clamp(signal.confidence + (((day + index) % 5) - 2), 42, 86),
-        note: demandNote(signal.family, trend, indexValue),
-        updatedDay: day,
-      };
-    });
-    const local = demandSignals.find((signal) => signal.regionId === world.regionId && signal.family === (day % 2 === 0 ? 'beer' : 'cider'));
-    if (local) {
-      pulse = [{
-        id: `pulse-${day}-demand-${local.id}`,
-        day,
-        tone: local.trend === 'falling' ? 'warning' as const : 'market' as const,
-        title: `${local.family === 'beer' ? 'Пиво' : 'Сидр'}: спрос ${local.trend === 'rising' ? 'растёт' : local.trend === 'falling' ? 'снижается' : 'держится'}`,
-        detail: `${local.note} Точность сигнала ${local.confidence}%.`,
-      }, ...pulse].slice(0, 12);
-    }
-  }
+  // Legacy WorldState demand is a projection of EcosystemState.demand and is not advanced independently.
+
 
   if (day % 5 === 0 && companies.length > 0) {
     const companyIndex = Math.floor(day / 5) % companies.length;
@@ -1658,7 +1633,21 @@ function syncWorldFromEcosystem(world: WorldState, ecosystem: EcosystemState): W
     const asset = ecosystem.assets.find((item) => item.marketOutletId === outlet.id);
     return asset?.operatorOrganizationId === ecosystem.playerOrganizationId ? { ...outlet, controlledByPlayer: true } : outlet;
   });
-  return { ...world, companies, outlets };
+  const demandSignals = world.demandSignals.map((signal) => {
+    const region = ecosystem.demand.regions.find((item) => item.regionId === signal.regionId);
+    const category = region?.today.categorySignals.find((item) => item.categoryId === signal.family);
+    if (!category) return signal;
+    const index = clamp(Math.round(category.index * 58), 10, 100);
+    return {
+      ...signal,
+      index,
+      trend: category.trend,
+      confidence: 68,
+      note: demandNote(signal.family, category.trend, index),
+      updatedDay: ecosystem.demand.currentDay,
+    };
+  });
+  return { ...world, companies, outlets, demandSignals };
 }
 
 function createWorldState(countryId: string, regionId: string, propertyId: string): WorldState {
