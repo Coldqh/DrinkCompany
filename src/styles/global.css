@@ -1341,3 +1341,86 @@ body { background:radial-gradient(circle at 55% -12%,rgba(111,24,47,.16),transpa
   .candidate-grid,.department-grid { grid-template-columns:1fr; }
   .compact-bottom-nav button small { font-size:.42rem; }
 }
+
+/* Patch 012 — owned retail */
+.compact-bottom-nav { grid-template-columns:repeat(7,minmax(0,1fr)); padding-inline:5px; }
+.compact-bottom-nav button { min-width:0; }
+.compact-bottom-nav button small { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.39rem; }
+.compact-bottom-nav .nav-icon { width:27px;height:27px; }
+.retail-hub { display:grid;gap:10px; }
+.retail-command { min-height:108px;padding:14px;display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px;border-radius:20px;background:linear-gradient(135deg,#18171b,#0b0b0e); }
+.retail-command h2 { margin:0 0 5px;font-size:1.05rem; }
+.retail-command p { margin:0;color:#85818a;font-size:.6rem;line-height:1.45; }
+.retail-open-button { width:62px;height:62px;border:1px solid rgba(151,42,68,.38);border-radius:19px;background:linear-gradient(145deg,#461321,#1b0c12);color:#eee5e8;display:grid;place-content:center;gap:3px;cursor:pointer; }
+.retail-open-button svg { margin:auto;width:1.25rem; }
+.retail-open-button span { font-size:.43rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em; }
+.retail-stat-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.retail-venue-grid,.retail-stock-stack,.retail-growth-list { display:grid;gap:8px; }
+.retail-venue-card { width:100%;min-height:78px;padding:10px;border-radius:17px;display:grid;grid-template-columns:44px 1fr auto;align-items:center;gap:10px;color:inherit;text-align:left;cursor:pointer; }
+.retail-venue-visual { width:42px;height:42px;position:relative;display:grid;place-items:center;border-radius:13px;background:#271019;color:#b94c67;border:1px solid rgba(189,82,108,.18); }
+.retail-venue-visual i { position:absolute;right:-3px;bottom:-3px;width:17px;height:17px;display:grid;place-items:center;border-radius:7px;background:#8e253f;color:#fff;font-size:.43rem;font-style:normal;font-weight:900;border:2px solid #111114; }
+.retail-venue-card>div:nth-child(2) span,.retail-venue-card>div:nth-child(2) strong,.retail-venue-card>div:nth-child(2) small { display:block; }
+.retail-venue-card>div:nth-child(2) span { color:#9f3d56;font-size:.43rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em; }
+.retail-venue-card>div:nth-child(2) strong { margin-top:3px;font-size:.68rem; }
+.retail-venue-card>div:nth-child(2) small { margin-top:3px;color:#77737b;font-size:.46rem; }
+.retail-venue-card>b { text-align:right;color:#d8d0d4;font-size:.68rem; }
+.retail-venue-card>b small { display:block;margin-top:3px;color:#6e6a71;font-size:.4rem;font-weight:600; }
+.retail-stock-card,.retail-growth-list>article { padding:12px;border-radius:18px; }
+.retail-stock-card>header,.retail-growth-list>article>header { display:flex;align-items:center;justify-content:space-between;gap:10px; }
+.retail-stock-card>header span,.retail-stock-card>header strong,.retail-growth-list>article>header span,.retail-growth-list>article>header strong { display:block; }
+.retail-stock-card>header span,.retail-growth-list>article>header span { color:#a23d57;font-size:.44rem;font-weight:900;text-transform:uppercase;letter-spacing:.07em; }
+.retail-stock-card>header strong,.retail-growth-list>article>header strong { margin-top:3px;font-size:.66rem; }
+.retail-stock-card>p { margin:10px 0 0;color:#77737b;font-size:.5rem; }
+.retail-capacity { margin-top:10px; }
+.retail-capacity>span { color:#77737b;font-size:.46rem; }
+.retail-capacity>i { display:block;height:5px;margin-top:6px;border-radius:99px;background:#242329;overflow:hidden; }
+.retail-capacity>i b { display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#64182d,#a83a56); }
+.retail-stock-lines { display:grid;margin-top:8px; }
+.retail-stock-lines>div { min-height:43px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--line); }
+.retail-stock-lines strong,.retail-stock-lines small { display:block; }
+.retail-stock-lines strong { font-size:.58rem; }
+.retail-stock-lines small { margin-top:2px;color:#747078;font-size:.44rem; }
+.retail-stock-lines>b { color:#bcb4b9;font-size:.55rem; }
+.retail-report-list { padding:3px 12px;border-radius:18px; }
+.retail-report-list>article { min-height:58px;display:grid;grid-template-columns:7px 1fr auto;align-items:center;gap:9px;border-bottom:1px solid var(--line); }
+.retail-report-list>article:last-child { border-bottom:0; }
+.retail-report-list>article>i { width:6px;height:6px;border-radius:50%;background:#77737b; }
+.retail-report-list>article>i.good { background:#a9445e;box-shadow:0 0 10px rgba(169,68,94,.35); }
+.retail-report-list>article>i.bad { background:#5b1829; }
+.retail-report-list strong,.retail-report-list small { display:block; }
+.retail-report-list strong { font-size:.57rem; }
+.retail-report-list small { margin-top:3px;color:#747078;font-size:.44rem;line-height:1.35; }
+.retail-report-list b { color:#d0c8cc;font-size:.6rem; }
+.retail-growth-actions { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:10px; }
+.retail-growth-actions .button:last-child { grid-column:1/-1; }
+.retail-type-choice { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px; }
+.retail-type-choice button { min-height:145px;padding:12px;border:1px solid var(--line);border-radius:17px;background:#111114;color:inherit;text-align:left;display:grid;align-content:start;gap:6px;cursor:pointer; }
+.retail-type-choice button.active { border-color:#7f243d;background:#251019;box-shadow:inset 0 0 0 1px rgba(189,82,108,.1); }
+.retail-type-choice svg { color:#ad455f; }
+.retail-type-choice strong,.retail-type-choice small,.retail-type-choice b { display:block; }
+.retail-type-choice strong { font-size:.68rem; }
+.retail-type-choice small { color:#77737b;font-size:.47rem;line-height:1.4; }
+.retail-type-choice b { margin-top:auto;color:#c9c1c5;font-size:.62rem; }
+.release-choice-list { display:grid;gap:7px; }
+.release-choice-list button { width:100%;min-height:55px;padding:8px 10px;border:1px solid var(--line);border-radius:14px;background:#111114;color:inherit;display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:9px;text-align:left;cursor:pointer; }
+.release-choice-list button.active { border-color:#7e233c;background:#251019; }
+.release-choice-list strong,.release-choice-list small { display:block; }
+.release-choice-list strong { font-size:.61rem; }
+.release-choice-list small { margin-top:2px;color:#747078;font-size:.45rem; }
+.release-choice-list>b { color:#beb6bb;font-size:.58rem; }
+.retail-stock-form { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:11px 0; }
+.retail-stock-form label { display:grid;gap:5px;color:#85818a;font-size:.5rem; }
+.retail-stock-form input { width:100%;border:1px solid var(--line);background:#0b0b0e;color:#eee9ec;padding:11px;border-radius:12px; }
+.retail-mini-history { display:grid;margin-top:12px; }
+.retail-mini-history>div { min-height:43px;display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--line); }
+.retail-mini-history strong,.retail-mini-history small { display:block; }
+.retail-mini-history strong { font-size:.56rem; }
+.retail-mini-history small { margin-top:2px;color:#747078;font-size:.44rem; }
+.retail-mini-history b { font-size:.58rem; }
+@media (max-width:390px) {
+  .retail-stat-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .retail-type-choice,.retail-growth-actions { grid-template-columns:1fr; }
+  .retail-growth-actions .button:last-child { grid-column:auto; }
+  .compact-bottom-nav button small { display:none; }
+  .compact-bottom-nav { height:calc(54px + env(safe-area-inset-bottom)); }
+}

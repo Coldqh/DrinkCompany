@@ -7,6 +7,12 @@ import {
   advanceDay,
   fulfillRepeatOrder,
   hireTeamCandidate,
+  openPlayerRetailVenue,
+  stockPlayerRetailVenue,
+  registerBrand,
+  registerProductRelease,
+  cleanPlayerRetailVenue,
+  upgradePlayerRetailVenue,
   migrateGameState,
   orderSupplies,
   packageProductionBatch,
@@ -21,6 +27,7 @@ import {
   type PropertyDefinition,
 } from './game';
 import { createRecipeDraft } from './production';
+import { DEFAULT_PACKAGING } from './brand';
 import { parseGameState } from '../infrastructure/gameStateRepository';
 
 const property: PropertyDefinition = {
@@ -62,7 +69,7 @@ describe('startCompany', () => {
   it('создаёт рабочее состояние и списывает стоимость объекта', () => {
     const state = createCompany();
     expect(state.phase).toBe('operating');
-    expect(state.schemaVersion).toBe(8);
+    expect(state.schemaVersion).toBe(9);
     expect(state.finance.cash).toBe(100_000);
     expect(state.finance.dailyFixedCost).toBeGreaterThan(180);
     expect(state.facility?.rooms.production).toBe(1);
@@ -174,7 +181,7 @@ describe('save parsing', () => {
   it('принимает текущее сохранение schemaVersion 6', () => {
     const state = createCompany();
     const parsed = parseGameState(JSON.stringify(state));
-    expect(parsed.schemaVersion).toBe(8);
+    expect(parsed.schemaVersion).toBe(9);
     expect(parsed.facility).not.toBeNull();
   });
 });
@@ -195,7 +202,7 @@ describe('save migration', () => {
     };
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(8);
+    expect(migrated.schemaVersion).toBe(9);
     expect(migrated.production.batches).toEqual([]);
     expect(migrated.company.completedBatches).toBe(0);
     expect(migrated.supply.inventory).toEqual([]);
@@ -213,7 +220,7 @@ describe('save migration', () => {
     delete world.nextRepeatOrderNumber;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(8);
+    expect(migrated.schemaVersion).toBe(9);
     expect(migrated.world?.repeatOrders).toEqual([]);
     expect(migrated.world?.demandSignals.length).toBeGreaterThan(0);
     expect(migrated.supply.offers.length).toBeGreaterThan(0);
@@ -233,7 +240,7 @@ describe('save migration', () => {
     delete finance.unitsSold;
 
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(8);
+    expect(migrated.schemaVersion).toBe(9);
     expect(migrated.world?.outlets).toHaveLength(12);
     expect(migrated.finance.salesRevenue).toBe(0);
   });
@@ -383,5 +390,67 @@ describe('living market', () => {
     for (let index = 0; index < 5; index += 1) state = advanceDay(state);
     expect(state.world?.releases.length).toBeGreaterThan(0);
     expect(state.world?.demandSignals.map((signal) => signal.index)).not.toEqual(initialDemand);
+  });
+});
+
+
+describe('owned retail', () => {
+  it('открывает бар, передаёт релиз на полку и продаёт его по дням', () => {
+    let state = createCompany();
+    for (const equipmentId of ['micro-brewhouse', 'fermentation-bank', 'compact-bottler', 'lab-kit']) {
+      const equipment = equipmentCatalog.find((item) => item.id === equipmentId);
+      if (!equipment) throw new Error('test equipment missing');
+      state = purchaseEquipment(state, equipment);
+    }
+    state = stockBeerMaterials(state);
+    const draft = { ...createRecipeDraft('beer'), name: 'Retail Pale', primaryDays: 1, conditioningDays: 1, volumeLiters: 80 };
+    state = startProductionBatch(state, draft, property, equipmentCatalog);
+    state = advanceDay(advanceDay(state));
+    const batch = state.production.batches[0];
+    if (!batch) throw new Error('batch missing');
+    state = tasteProductionBatch(state, batch.id);
+    state = packageProductionBatch(state, batch.id);
+    state = registerBrand(state, { name: 'Night District', tagline: 'Local beer', positioning: 'bar', story: 'Test brand' });
+    const brand = state.brand.brands[0];
+    if (!brand) throw new Error('brand missing');
+    state = registerProductRelease(state, { brandId: brand.id, batchId: batch.id, name: 'District Pale', positioning: 'bar', packaging: DEFAULT_PACKAGING, wholesalePrice: 2.6, retailPrice: 5.2 });
+    const release = state.brand.releases[0];
+    if (!release) throw new Error('release missing');
+    state = openPlayerRetailVenue(state, { type: 'bar', name: 'Black Yard' });
+    const venue = state.retail.venues[0];
+    if (!venue) throw new Error('venue missing');
+    const availableBefore = state.production.batches.find((item) => item.id === batch.id)?.availableUnits ?? 0;
+    state = stockPlayerRetailVenue(state, venue.id, release.id, 24, 5.4);
+    expect(state.production.batches.find((item) => item.id === batch.id)?.availableUnits).toBe(availableBefore - 24);
+    const cashBefore = state.finance.cash;
+    state = advanceDay(state);
+    expect(state.retail.reports[0]?.unitsSold).toBeGreaterThan(0);
+    expect(state.retail.directSalesRevenue).toBeGreaterThan(0);
+    expect(state.finance.retailRevenue).toBeGreaterThan(0);
+    expect(state.finance.cash).toBeGreaterThan(cashBefore - state.finance.dailyFixedCost);
+  });
+
+  it('учитывает санитарную смену и расширение собственной точки', () => {
+    let state = openPlayerRetailVenue(createCompany(), { type: 'shop', name: 'District Bottle' });
+    const venue = state.retail.venues[0];
+    if (!venue) throw new Error('venue missing');
+    state = { ...state, retail: { ...state.retail, venues: [{ ...venue, cleanliness: 45 }] } };
+    const cashBeforeClean = state.finance.cash;
+    state = cleanPlayerRetailVenue(state, venue.id);
+    expect(state.retail.venues[0]?.cleanliness).toBeGreaterThan(45);
+    expect(state.finance.cash).toBeLessThan(cashBeforeClean);
+    const dailyBefore = state.finance.dailyFixedCost;
+    state = upgradePlayerRetailVenue(state, venue.id);
+    expect(state.retail.venues[0]?.level).toBe(2);
+    expect(state.finance.dailyFixedCost).toBeGreaterThan(dailyBefore);
+  });
+
+  it('добавляет пустую розницу при миграции schemaVersion 8', () => {
+    const legacy = JSON.parse(JSON.stringify(createCompany())) as Record<string, unknown>;
+    legacy.schemaVersion = 8;
+    delete legacy.retail;
+    const migrated = migrateGameState(legacy);
+    expect(migrated.schemaVersion).toBe(9);
+    expect(migrated.retail.venues).toEqual([]);
   });
 });

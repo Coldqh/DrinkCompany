@@ -6,16 +6,18 @@ import { CompanyDashboard } from '../dashboard/CompanyDashboard';
 import { MarketWorld } from '../market/MarketWorld';
 import { ProductionStudio } from '../production/ProductionStudio';
 import { TeamHub } from '../team/TeamHub';
+import { RetailHub } from '../retail/RetailHub';
 import { Icon } from '../../ui/Icon';
 import type { VersionGuard } from '../../app/useVersionGuard';
 
-export type Tab = 'company' | 'production' | 'batches' | 'market' | 'team' | 'archive';
+export type Tab = 'company' | 'production' | 'batches' | 'market' | 'retail' | 'team' | 'archive';
 
-const tabs: { id: Tab; label: string; icon: 'home' | 'factory' | 'batch' | 'market' | 'team' | 'archive' }[] = [
+const tabs: { id: Tab; label: string; icon: 'home' | 'factory' | 'batch' | 'market' | 'store' | 'team' | 'archive' }[] = [
   { id: 'company', label: 'Компания', icon: 'home' },
   { id: 'production', label: 'Цех', icon: 'factory' },
   { id: 'batches', label: 'Партии', icon: 'batch' },
   { id: 'market', label: 'Рынок', icon: 'market' },
+  { id: 'retail', label: 'Розница', icon: 'store' },
   { id: 'team', label: 'Команда', icon: 'team' },
   { id: 'archive', label: 'Архив', icon: 'archive' },
 ];
@@ -87,6 +89,7 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
           />
         )}
         {tab === 'market' && <MarketWorld state={game.state} onSendProposal={game.sendProposal} onAcceptOffer={game.acceptOffer} onDeclineOffer={game.declineOffer} onFulfillOrder={game.fulfillOrder} onCreateBrand={game.createBrand} onCreateRelease={game.createRelease} onLaunchCampaign={game.launchCampaign} />}
+        {tab === 'retail' && <RetailHub state={game.state} onOpen={game.openRetailVenue} onStock={game.stockRetailVenue} onClean={game.cleanRetailVenue} onUpgrade={game.upgradeRetailVenue} onStatus={game.setRetailVenueStatus} />}
         {tab === 'team' && <TeamHub state={game.state} onHire={game.hireEmployee} onFire={game.fireEmployee} onAssign={game.assignEmployee} onWorkload={game.setWorkload} onAutomation={game.setAutomation} onTrain={game.trainEmployee} />}
         {tab === 'archive' && <ArchiveView state={game.state} version={version} onExport={game.exportSave} onImport={game.importSave} onReset={game.reset} />}
       </main>

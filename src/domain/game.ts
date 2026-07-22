@@ -88,6 +88,19 @@ import {
   type Workload,
 } from './team';
 import {
+  advanceRetailDay,
+  cleanRetailVenue,
+  createRetailState,
+  openRetailVenue,
+  retailDailyCost,
+  setRetailVenueStatus,
+  stockRetailVenue,
+  upgradeRetailVenue,
+  type RetailState,
+  type RetailVenueStatus,
+  type RetailVenueType,
+} from './retail';
+import {
   batchConsistency,
   createConsumerReview,
   createProposal,
@@ -197,6 +210,8 @@ export interface FinanceState {
   maintenanceSpend: number;
   brandSpend: number;
   teamSpend: number;
+  retailSpend: number;
+  retailRevenue: number;
   packagedInventoryValue: number;
   salesRevenue: number;
   unitsSold: number;
@@ -224,7 +239,7 @@ export interface TutorialState {
 }
 
 export interface GameState {
-  schemaVersion: 8;
+  schemaVersion: 9;
   phase: GamePhase;
   mode: GameMode;
   day: number;
@@ -236,6 +251,7 @@ export interface GameState {
   facility: FacilityState | null;
   brand: BrandState;
   team: TeamState;
+  retail: RetailState;
   tutorial: TutorialState;
   discoveredProductFamilies: ProductFamily[];
   createdAt: string;
@@ -256,27 +272,33 @@ export interface LegacyGameStateV1 {
 }
 
 
-export interface LegacyGameStateV7 extends Omit<GameState, 'schemaVersion' | 'team'> {
+
+export interface LegacyGameStateV8 extends Omit<GameState, 'schemaVersion' | 'retail'> {
+  schemaVersion: 8;
+  retail?: RetailState;
+}
+
+export interface LegacyGameStateV7 extends Omit<GameState, 'schemaVersion' | 'team' | 'retail'> {
   schemaVersion: 7;
   team?: TeamState;
 }
 
-export interface LegacyGameStateV6 extends Omit<GameState, 'schemaVersion' | 'brand' | 'team'> {
+export interface LegacyGameStateV6 extends Omit<GameState, 'schemaVersion' | 'brand' | 'team' | 'retail'> {
   schemaVersion: 6;
   brand?: BrandState;
 }
 
-export interface LegacyGameStateV5 extends Omit<GameState, 'schemaVersion' | 'facility' | 'brand' | 'team'> {
+export interface LegacyGameStateV5 extends Omit<GameState, 'schemaVersion' | 'facility' | 'brand' | 'team' | 'retail'> {
   schemaVersion: 5;
   facility?: FacilityState | null;
 }
 
-export interface LegacyGameStateV4 extends Omit<GameState, 'schemaVersion' | 'supply' | 'brand' | 'team'> {
+export interface LegacyGameStateV4 extends Omit<GameState, 'schemaVersion' | 'supply' | 'brand' | 'team' | 'retail'> {
   schemaVersion: 4;
   supply?: SupplyState;
 }
 
-export interface LegacyGameStateV3 extends Omit<GameState, 'schemaVersion' | 'world' | 'brand' | 'team'> {
+export interface LegacyGameStateV3 extends Omit<GameState, 'schemaVersion' | 'world' | 'brand' | 'team' | 'retail'> {
   schemaVersion: 3;
   world: (Omit<WorldState, 'repeatOrders' | 'reviews' | 'demandSignals' | 'releases' | 'nextRepeatOrderNumber'> & Partial<Pick<WorldState, 'repeatOrders' | 'reviews' | 'demandSignals' | 'releases' | 'nextRepeatOrderNumber'>>) | null;
 }
@@ -294,7 +316,7 @@ export interface LegacyGameStateV2 {
     companies: WorldCompanyState[];
     pulse: WorldPulseItem[];
   } | null;
-  finance: Omit<FinanceState, 'salesRevenue' | 'unitsSold' | 'teamSpend'>;
+  finance: Omit<FinanceState, 'salesRevenue' | 'unitsSold' | 'teamSpend' | 'retailSpend' | 'retailRevenue'>;
   production: ProductionState;
   supply: SupplyState;
   facility: FacilityState | null;
@@ -320,7 +342,7 @@ export const STARTING_CASH: Record<GameMode, number> = {
 export function createInitialState(now = new Date()): GameState {
   const timestamp = now.toISOString();
   return {
-    schemaVersion: 8,
+    schemaVersion: 9,
     phase: 'onboarding',
     mode: 'standard',
     day: 1,
@@ -332,6 +354,7 @@ export function createInitialState(now = new Date()): GameState {
     facility: null,
     brand: createBrandState(),
     team: createTeamState(1),
+    retail: createRetailState(),
     tutorial: { dismissed: false, completedSteps: [] },
     discoveredProductFamilies: ['beer', 'cider'],
     createdAt: timestamp,
@@ -351,7 +374,7 @@ export function startCompany(selection: NewGameSelection, now = new Date()): Gam
   const timestamp = now.toISOString();
   const facility = createFacilityState({ ...selection.property, propertyDailyCost: selection.property.dailyCost }, 1);
   return {
-    schemaVersion: 8,
+    schemaVersion: 9,
     phase: 'operating',
     mode: selection.mode,
     day: 1,
@@ -363,6 +386,7 @@ export function startCompany(selection: NewGameSelection, now = new Date()): Gam
     facility,
     brand: createBrandState(),
     team: createTeamState(1),
+    retail: createRetailState(),
     tutorial: { dismissed: false, completedSteps: [] },
     discoveredProductFamilies: ['beer', 'cider'],
     createdAt: timestamp,
@@ -776,7 +800,7 @@ export function expandFacilityRoom(state: GameState, roomId: FacilityRoomId, now
   const cost = roomUpgradeCost(state.facility, roomId);
   if (state.finance.cash < cost) throw new Error('Недостаточно денег на расширение помещения');
   const facility = upgradeRoom(state.facility, roomId, state.day);
-  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), facilitySpend: roundMoney(state.finance.facilitySpend + cost) }, facility, state.team) }, now);
+  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), facilitySpend: roundMoney(state.finance.facilitySpend + cost) }, facility, state.team, state.retail) }, now);
 }
 
 export function expandFacilityUtility(state: GameState, utilityId: FacilityUtilityId, now = new Date()): GameState {
@@ -785,7 +809,7 @@ export function expandFacilityUtility(state: GameState, utilityId: FacilityUtili
   const cost = utilityUpgradeCost(state.facility, utilityId);
   if (state.finance.cash < cost) throw new Error('Недостаточно денег на инфраструктуру');
   const facility = upgradeUtility(state.facility, utilityId, state.day);
-  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), facilitySpend: roundMoney(state.finance.facilitySpend + cost) }, facility, state.team) }, now);
+  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), facilitySpend: roundMoney(state.finance.facilitySpend + cost) }, facility, state.team, state.retail) }, now);
 }
 
 export function cleanProductionFacility(state: GameState, now = new Date()): GameState {
@@ -794,7 +818,7 @@ export function cleanProductionFacility(state: GameState, now = new Date()): Gam
   const cost = cleaningCost(state.facility);
   if (state.finance.cash < cost) throw new Error('Недостаточно денег на санитарную смену');
   const facility = cleanFacility(state.facility, state.day);
-  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), maintenanceSpend: roundMoney(state.finance.maintenanceSpend + cost) }, facility, state.team) }, now);
+  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), maintenanceSpend: roundMoney(state.finance.maintenanceSpend + cost) }, facility, state.team, state.retail) }, now);
 }
 
 export function serviceProductionEquipment(state: GameState, equipment: EquipmentDefinition, now = new Date()): GameState {
@@ -803,7 +827,7 @@ export function serviceProductionEquipment(state: GameState, equipment: Equipmen
   const cost = equipmentServiceCost(state.facility, equipment);
   if (state.finance.cash < cost) throw new Error('Недостаточно денег на обслуживание');
   const facility = serviceEquipment(state.facility, equipment, state.day);
-  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), maintenanceSpend: roundMoney(state.finance.maintenanceSpend + cost) }, facility, state.team) }, now);
+  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), maintenanceSpend: roundMoney(state.finance.maintenanceSpend + cost) }, facility, state.team, state.retail) }, now);
 }
 
 export function upgradeProductionEquipment(state: GameState, equipment: EquipmentDefinition, now = new Date()): GameState {
@@ -812,7 +836,7 @@ export function upgradeProductionEquipment(state: GameState, equipment: Equipmen
   const cost = equipmentUpgradeCost(state.facility, equipment);
   if (state.finance.cash < cost) throw new Error('Недостаточно денег на модернизацию');
   const facility = modernizeEquipment(state.facility, equipment, state.day);
-  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), facilitySpend: roundMoney(state.finance.facilitySpend + cost) }, facility, state.team) }, now);
+  return touch({ ...state, facility, finance: withFacilityCost({ ...state.finance, cash: roundMoney(state.finance.cash - cost), facilitySpend: roundMoney(state.finance.facilitySpend + cost) }, facility, state.team, state.retail) }, now);
 }
 
 export function queueProductionRecipe(state: GameState, recipeId: string, now = new Date()): GameState {
@@ -873,7 +897,7 @@ export function hireTeamCandidate(state: GameState, candidateId: string, now = n
   return touch({
     ...state,
     team: result.team,
-    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), teamSpend: roundMoney(state.finance.teamSpend + result.cost), dailyFixedCost: roundMoney((state.facility ? facilityDailyCost(state.facility) : state.finance.dailyFixedCost) + dailyPayroll(result.team)) },
+    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), teamSpend: roundMoney(state.finance.teamSpend + result.cost), dailyFixedCost: roundMoney((state.facility ? facilityDailyCost(state.facility) : state.finance.dailyFixedCost) + dailyPayroll(result.team) + retailDailyCost(state.retail)) },
   }, now);
 }
 
@@ -884,7 +908,7 @@ export function fireTeamEmployee(state: GameState, employeeId: string, now = new
   return touch({
     ...state,
     team: result.team,
-    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), teamSpend: roundMoney(state.finance.teamSpend + result.cost), dailyFixedCost: roundMoney((state.facility ? facilityDailyCost(state.facility) : state.finance.dailyFixedCost) + dailyPayroll(result.team)) },
+    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), teamSpend: roundMoney(state.finance.teamSpend + result.cost), dailyFixedCost: roundMoney((state.facility ? facilityDailyCost(state.facility) : state.finance.dailyFixedCost) + dailyPayroll(result.team) + retailDailyCost(state.retail)) },
   }, now);
 }
 
@@ -919,6 +943,69 @@ export function trainTeamEmployee(state: GameState, employeeId: string, track: T
   }, now);
 }
 
+export function openPlayerRetailVenue(state: GameState, input: { type: RetailVenueType; name: string }, now = new Date()): GameState {
+  ensureOperating(state);
+  if (!state.world) throw new Error('Регион компании не найден');
+  const result = openRetailVenue(state.retail, { ...input, regionId: state.world.regionId }, state.day);
+  if (state.finance.cash < result.cost) throw new Error('Недостаточно денег на открытие точки');
+  return touch({
+    ...state,
+    retail: result.retail,
+    finance: {
+      ...state.finance,
+      cash: roundMoney(state.finance.cash - result.cost),
+      retailSpend: roundMoney(state.finance.retailSpend + result.cost),
+      dailyFixedCost: roundMoney((state.facility ? facilityDailyCost(state.facility) : 0) + dailyPayroll(state.team) + retailDailyCost(result.retail)),
+    },
+  }, now);
+}
+
+export function stockPlayerRetailVenue(state: GameState, venueId: string, releaseId: string, units: number, price: number, now = new Date()): GameState {
+  ensureOperating(state);
+  const release = state.brand.releases.find((item) => item.id === releaseId && item.status === 'active');
+  if (!release) throw new Error('Активный релиз не найден');
+  const batch = getBatch(state, release.batchId);
+  const result = stockRetailVenue(state.retail, venueId, release, batch, units, price, state.day);
+  return touch({ ...state, retail: result.retail, production: replaceBatch(state.production, result.batch) }, now);
+}
+
+export function cleanPlayerRetailVenue(state: GameState, venueId: string, now = new Date()): GameState {
+  ensureOperating(state);
+  const result = cleanRetailVenue(state.retail, venueId);
+  if (state.finance.cash < result.cost) throw new Error('Недостаточно денег на санитарную смену');
+  return touch({
+    ...state,
+    retail: result.retail,
+    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), retailSpend: roundMoney(state.finance.retailSpend + result.cost) },
+  }, now);
+}
+
+export function upgradePlayerRetailVenue(state: GameState, venueId: string, now = new Date()): GameState {
+  ensureOperating(state);
+  const result = upgradeRetailVenue(state.retail, venueId);
+  if (state.finance.cash < result.cost) throw new Error('Недостаточно денег на расширение точки');
+  return touch({
+    ...state,
+    retail: result.retail,
+    finance: {
+      ...state.finance,
+      cash: roundMoney(state.finance.cash - result.cost),
+      retailSpend: roundMoney(state.finance.retailSpend + result.cost),
+      dailyFixedCost: roundMoney((state.facility ? facilityDailyCost(state.facility) : 0) + dailyPayroll(state.team) + retailDailyCost(result.retail)),
+    },
+  }, now);
+}
+
+export function setPlayerRetailVenueStatus(state: GameState, venueId: string, status: RetailVenueStatus, now = new Date()): GameState {
+  ensureOperating(state);
+  const retail = setRetailVenueStatus(state.retail, venueId, status);
+  return touch({
+    ...state,
+    retail,
+    finance: { ...state.finance, dailyFixedCost: roundMoney((state.facility ? facilityDailyCost(state.facility) : 0) + dailyPayroll(state.team) + retailDailyCost(retail)) },
+  }, now);
+}
+
 export function dismissTutorial(state: GameState, now = new Date()): GameState {
   return touch({ ...state, tutorial: { ...state.tutorial, dismissed: true } }, now);
 }
@@ -934,11 +1021,14 @@ export function advanceDay(state: GameState, now = new Date()): GameState {
     ? applyTeamSupportToFacility(state.facility, facilityAdvance.facility, workforce.wearReduction * (teamAdvance.team.automation.maintenance ? 1 : 0.35), workforce.sanitationSupport * (teamAdvance.team.automation.cleaning ? 1 : 0.35))
     : state.facility;
   const facilityCost = facility ? facilityDailyCost(facility) : state.finance.dailyFixedCost;
-  const dailyFixedCost = roundMoney(facilityCost + teamAdvance.payroll);
-  const nextCash = roundMoney(state.finance.cash - dailyFixedCost);
+  const retailCost = retailDailyCost(state.retail);
+  const dailyFixedCost = roundMoney(facilityCost + teamAdvance.payroll + retailCost);
   const batches = state.production.batches.map((batch) => advanceBatch(batch, nextDay));
   const supplyAdvance = advanceSupplyDay(state.supply, nextDay);
   const brand = advanceBrandDay(state.brand, nextDay);
+  const retailAdvance = advanceRetailDay(state.retail, brand, batches, nextDay, workforce.salesSkill + workforce.marketingSkill);
+  const retailBookValue = retailAdvance.reports.reduce((sum, report) => sum + report.lines.reduce((lineSum, line) => { const batch = batches.find((item) => item.id === line.batchId); return lineSum + (batch ? unitBookValue(batch) * line.units : 0); }, 0), 0);
+  const nextCash = roundMoney(state.finance.cash - dailyFixedCost + retailAdvance.revenue);
   let world = state.world ? advanceWorld(state.world, batches, state.company.reputation, nextDay, brand, workforce.salesSkill) : null;
   if (world && supplyAdvance.events.length > 0) {
     world = {
@@ -967,12 +1057,17 @@ export function advanceDay(state: GameState, now = new Date()): GameState {
       cash: nextCash,
       dailyFixedCost,
       teamSpend: roundMoney(state.finance.teamSpend + teamAdvance.payroll),
+      retailRevenue: roundMoney(state.finance.retailRevenue + retailAdvance.revenue),
+      salesRevenue: roundMoney(state.finance.salesRevenue + retailAdvance.revenue),
+      unitsSold: state.finance.unitsSold + retailAdvance.unitsSold,
+      packagedInventoryValue: roundMoney(Math.max(0, state.finance.packagedInventoryValue - retailBookValue)),
     },
     production: { ...state.production, batches },
     supply: supplyAdvance.supply,
     facility,
     brand,
     team: teamAdvance.team,
+    retail: retailAdvance.retail,
     world,
   }, now);
   nextState = tryLaunchQueuedBatch(nextState, now);
@@ -984,41 +1079,46 @@ export function migrateGameState(value: unknown): GameState {
   if (!value || typeof value !== 'object') return createInitialState();
   const candidate = value as { schemaVersion?: number; phase?: unknown; company?: unknown; finance?: unknown; production?: unknown };
 
-  if (candidate.schemaVersion === 8 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
+  if (candidate.schemaVersion === 9 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
     return normalizeCurrentState(value as GameState);
+  }
+
+  if (candidate.schemaVersion === 8 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
+    const legacy = value as LegacyGameStateV8;
+    return normalizeCurrentState({ ...legacy, schemaVersion: 9, retail: legacy.retail ?? createRetailState() } as GameState);
   }
 
   if (candidate.schemaVersion === 7 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
     const legacy = value as LegacyGameStateV7;
-    return normalizeCurrentState({ ...legacy, schemaVersion: 8, team: legacy.team ?? createTeamState(legacy.day) } as GameState);
+    return normalizeCurrentState({ ...legacy, schemaVersion: 9, team: legacy.team ?? createTeamState(legacy.day), retail: createRetailState() } as GameState);
   }
 
   if (candidate.schemaVersion === 6 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
     const legacy = value as LegacyGameStateV6;
-    return normalizeCurrentState({ ...legacy, schemaVersion: 8, brand: legacy.brand ?? createBrandState(), team: createTeamState(legacy.day) } as GameState);
+    return normalizeCurrentState({ ...legacy, schemaVersion: 9, brand: legacy.brand ?? createBrandState(), team: createTeamState(legacy.day), retail: createRetailState() } as GameState);
   }
 
 
   if (candidate.schemaVersion === 5 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
     const legacy = value as LegacyGameStateV5;
     const property = properties.find((item) => item.id === legacy.world?.propertyId);
-    return normalizeCurrentState({ ...legacy, schemaVersion: 8, facility: legacy.facility ?? (property ? createFacilityState({ ...property, propertyDailyCost: property.dailyCost }, legacy.day) : null), team: createTeamState(legacy.day) } as GameState);
+    return normalizeCurrentState({ ...legacy, schemaVersion: 9, facility: legacy.facility ?? (property ? createFacilityState({ ...property, propertyDailyCost: property.dailyCost }, legacy.day) : null), team: createTeamState(legacy.day), retail: createRetailState() } as GameState);
   }
 
   if (candidate.schemaVersion === 4 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
     const legacy = value as LegacyGameStateV4;
-    return normalizeCurrentState({ ...legacy, schemaVersion: 8, facility: null, supply: legacy.supply ?? createSupplyState(legacy.day), team: createTeamState(legacy.day) } as GameState);
+    return normalizeCurrentState({ ...legacy, schemaVersion: 9, facility: null, supply: legacy.supply ?? createSupplyState(legacy.day), team: createTeamState(legacy.day), retail: createRetailState() } as GameState);
   }
 
   if (candidate.schemaVersion === 3 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
-    return normalizeCurrentState({ ...(value as LegacyGameStateV3), schemaVersion: 8, facility: null, supply: createSupplyState((value as LegacyGameStateV3).day), team: createTeamState((value as LegacyGameStateV3).day) } as GameState);
+    return normalizeCurrentState({ ...(value as LegacyGameStateV3), schemaVersion: 9, facility: null, supply: createSupplyState((value as LegacyGameStateV3).day), team: createTeamState((value as LegacyGameStateV3).day), retail: createRetailState() } as GameState);
   }
 
   if (candidate.schemaVersion === 2 && candidate.phase && candidate.company && candidate.finance && candidate.production) {
     const legacy = value as LegacyGameStateV2;
     return normalizeCurrentState({
       ...legacy,
-      schemaVersion: 8,
+      schemaVersion: 9,
       facility: null,
       world: legacy.world ? {
         ...createWorldState(legacy.world.countryId, legacy.world.regionId, legacy.world.propertyId),
@@ -1028,6 +1128,7 @@ export function migrateGameState(value: unknown): GameState {
       supply: createSupplyState(legacy.day),
       brand: createBrandState(),
       team: createTeamState(legacy.day),
+      retail: createRetailState(),
       finance: {
         ...legacy.finance,
         salesRevenue: 0,
@@ -1037,6 +1138,8 @@ export function migrateGameState(value: unknown): GameState {
         maintenanceSpend: 0,
     brandSpend: 0,
     teamSpend: 0,
+        retailSpend: 0,
+        retailRevenue: 0,
       },
     });
   }
@@ -1044,7 +1147,7 @@ export function migrateGameState(value: unknown): GameState {
   if (candidate.schemaVersion === 1 && candidate.phase && candidate.company && candidate.finance) {
     const legacy = value as LegacyGameStateV1;
     return {
-      schemaVersion: 8,
+      schemaVersion: 9,
       phase: legacy.phase,
       mode: legacy.mode,
       day: legacy.day,
@@ -1059,6 +1162,8 @@ export function migrateGameState(value: unknown): GameState {
         maintenanceSpend: 0,
     brandSpend: 0,
     teamSpend: 0,
+        retailSpend: 0,
+        retailRevenue: 0,
         packagedInventoryValue: 0,
         salesRevenue: 0,
         unitsSold: 0,
@@ -1067,6 +1172,7 @@ export function migrateGameState(value: unknown): GameState {
       supply: createSupplyState(legacy.day),
       brand: createBrandState(),
       team: createTeamState(legacy.day),
+      retail: createRetailState(),
       facility: legacy.world ? (() => { const property = properties.find((item) => item.id === legacy.world?.propertyId); return property ? createFacilityState({ ...property, propertyDailyCost: property.dailyCost }, legacy.day) : null; })() : null,
       tutorial: { dismissed: false, completedSteps: [] },
       discoveredProductFamilies: legacy.discoveredProductFamilies ?? ['beer', 'cider'],
@@ -1110,7 +1216,7 @@ function normalizeCurrentState(state: GameState): GameState {
   } : null;
   return {
     ...state,
-    schemaVersion: 8,
+    schemaVersion: 9,
     finance: {
       ...state.finance,
       salesRevenue: state.finance.salesRevenue ?? 0,
@@ -1120,10 +1226,13 @@ function normalizeCurrentState(state: GameState): GameState {
       maintenanceSpend: state.finance.maintenanceSpend ?? 0,
       brandSpend: state.finance.brandSpend ?? 0,
       teamSpend: state.finance.teamSpend ?? 0,
+      retailSpend: state.finance.retailSpend ?? 0,
+      retailRevenue: state.finance.retailRevenue ?? 0,
     },
     production,
     brand: state.brand ?? createBrandState(),
     team: state.team ?? createTeamState(state.day),
+    retail: state.retail ?? createRetailState(),
     supply: state.supply ?? createSupplyState(state.day),
     facility: normalizeFacility(state.facility, state, world),
     world,
@@ -1141,6 +1250,8 @@ function createFinance(cash: number, dailyFixedCost: number): FinanceState {
     maintenanceSpend: 0,
     brandSpend: 0,
     teamSpend: 0,
+    retailSpend: 0,
+    retailRevenue: 0,
     packagedInventoryValue: 0,
     salesRevenue: 0,
     unitsSold: 0,
@@ -1173,8 +1284,8 @@ function normalizeFacility(facility: FacilityState | null | undefined, state: Ga
   return { ...registered, basePropertyDailyCost: registered.basePropertyDailyCost ?? property.dailyCost };
 }
 
-function withFacilityCost(finance: FinanceState, facility: FacilityState, team: TeamState): FinanceState {
-  return { ...finance, dailyFixedCost: roundMoney(facilityDailyCost(facility) + dailyPayroll(team)) };
+function withFacilityCost(finance: FinanceState, facility: FacilityState, team: TeamState, retail: RetailState): FinanceState {
+  return { ...finance, dailyFixedCost: roundMoney(facilityDailyCost(facility) + dailyPayroll(team) + retailDailyCost(retail)) };
 }
 
 function applyTeamSupportToFacility(previous: FacilityState, advanced: FacilityState, wearReduction: number, sanitationSupport: number): FacilityState {

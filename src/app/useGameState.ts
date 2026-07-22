@@ -18,6 +18,11 @@ import {
   dismissTutorial,
   packageProductionBatch,
   orderSupplies,
+  openPlayerRetailVenue,
+  stockPlayerRetailVenue,
+  cleanPlayerRetailVenue,
+  upgradePlayerRetailVenue,
+  setPlayerRetailVenueStatus,
   purchaseEquipment,
   queueProductionRecipe,
   removeQueuedRecipe,
@@ -42,6 +47,7 @@ import type { FacilityRoomId, FacilityUtilityId } from '../domain/facility';
 import type { IngredientCategory } from '../data/supplyCatalog';
 import type { ProposalInput } from '../domain/market';
 import type { BrandDraft, CampaignType, ReleaseDraft } from '../domain/brand';
+import type { RetailVenueStatus, RetailVenueType } from '../domain/retail';
 import type { ShiftId, TeamAutomation, TeamDepartment, TrainingTrack, Workload } from '../domain/team';
 import { loadGameState, parseGameState, saveGameState, serializeGameState } from '../infrastructure/gameStateRepository';
 
@@ -88,6 +94,11 @@ export interface GameController {
   setWorkload: (department: TeamDepartment, workload: Workload) => ActionResult;
   setAutomation: (key: keyof TeamAutomation, enabled: boolean) => ActionResult;
   trainEmployee: (employeeId: string, track: TrainingTrack) => ActionResult;
+  openRetailVenue: (type: RetailVenueType, name: string) => ActionResult;
+  stockRetailVenue: (venueId: string, releaseId: string, units: number, price: number) => ActionResult;
+  cleanRetailVenue: (venueId: string) => ActionResult;
+  upgradeRetailVenue: (venueId: string) => ActionResult;
+  setRetailVenueStatus: (venueId: string, status: RetailVenueStatus) => ActionResult;
 }
 
 export function useGameState(): GameController {
@@ -270,6 +281,26 @@ export function useGameState(): GameController {
     perform((current) => trainTeamEmployee(current, employeeId, track), 'Обучение запущено')
   ), [perform]);
 
+  const openRetailVenueAction = useCallback((type: RetailVenueType, name: string) => (
+    perform((current) => openPlayerRetailVenue(current, { type, name }), 'Собственная точка открыта')
+  ), [perform]);
+
+  const stockRetailVenueAction = useCallback((venueId: string, releaseId: string, units: number, price: number) => (
+    perform((current) => stockPlayerRetailVenue(current, venueId, releaseId, units, price), 'Продукт передан в розничную точку')
+  ), [perform]);
+
+  const cleanRetailVenueAction = useCallback((venueId: string) => (
+    perform((current) => cleanPlayerRetailVenue(current, venueId), 'Санитарная смена завершена')
+  ), [perform]);
+
+  const upgradeRetailVenueAction = useCallback((venueId: string) => (
+    perform((current) => upgradePlayerRetailVenue(current, venueId), 'Точка расширена')
+  ), [perform]);
+
+  const setRetailVenueStatusAction = useCallback((venueId: string, status: RetailVenueStatus) => (
+    perform((current) => setPlayerRetailVenueStatus(current, venueId, status), status === 'open' ? 'Точка открыта' : 'Точка временно закрыта')
+  ), [perform]);
+
   const reset = useCallback(() => replaceState(createInitialState()), [replaceState]);
 
   const exportSave = useCallback(() => {
@@ -326,5 +357,10 @@ export function useGameState(): GameController {
     setWorkload: setWorkloadAction,
     setAutomation: setAutomationAction,
     trainEmployee: trainEmployeeAction,
+    openRetailVenue: openRetailVenueAction,
+    stockRetailVenue: stockRetailVenueAction,
+    cleanRetailVenue: cleanRetailVenueAction,
+    upgradeRetailVenue: upgradeRetailVenueAction,
+    setRetailVenueStatus: setRetailVenueStatusAction,
   };
 }
