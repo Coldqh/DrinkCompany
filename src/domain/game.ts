@@ -94,13 +94,19 @@ import {
   createEcosystemState,
   ecosystemPlayerDailyCost,
   investInOrganization,
+  injectSubsidiaryCapital,
   leaseVacantAsset,
   migrateRetailIntoEcosystem,
   normalizeEcosystemState,
   setControlledVenueStatus,
   stockControlledVenue,
+  takeoverOrganization,
+  transferGroupAsset,
+  setSubsidiaryPolicy,
   upgradeControlledVenue,
   type EcosystemState,
+  type SubsidiaryAutonomy,
+  type TreasuryPolicy,
 } from './ecosystem';
 import type { RetailState, RetailVenueStatus, RetailVenueType } from './retail';
 import {
@@ -214,6 +220,7 @@ export interface FinanceState {
   brandSpend: number;
   teamSpend: number;
   retailSpend: number;
+  corporateSpend: number;
   retailRevenue: number;
   packagedInventoryValue: number;
   salesRevenue: number;
@@ -242,7 +249,7 @@ export interface TutorialState {
 }
 
 export interface GameState {
-  schemaVersion: 11;
+  schemaVersion: 12;
   phase: GamePhase;
   mode: GameMode;
   day: number;
@@ -325,7 +332,7 @@ export interface LegacyGameStateV2 {
     companies: WorldCompanyState[];
     pulse: WorldPulseItem[];
   } | null;
-  finance: Omit<FinanceState, 'salesRevenue' | 'unitsSold' | 'teamSpend' | 'retailSpend' | 'retailRevenue'>;
+  finance: Omit<FinanceState, 'salesRevenue' | 'unitsSold' | 'teamSpend' | 'retailSpend' | 'corporateSpend' | 'retailRevenue'>;
   production: ProductionState;
   supply: SupplyState;
   facility: FacilityState | null;
@@ -351,7 +358,7 @@ export const STARTING_CASH: Record<GameMode, number> = {
 export function createInitialState(now = new Date()): GameState {
   const timestamp = now.toISOString();
   return {
-    schemaVersion: 11,
+    schemaVersion: 12,
     phase: 'onboarding',
     mode: 'standard',
     day: 1,
@@ -396,7 +403,7 @@ export function startCompany(selection: NewGameSelection, now = new Date()): Gam
     day: 1,
   });
   return {
-    schemaVersion: 11,
+    schemaVersion: 12,
     phase: 'operating',
     mode: selection.mode,
     day: 1,
@@ -1010,6 +1017,45 @@ export function investWorldOrganization(state: GameState, organizationId: string
   }, now);
 }
 
+export function takeoverWorldOrganization(state: GameState, organizationId: string, targetShare: 51 | 75 | 100, now = new Date()): GameState {
+  ensureOperating(state);
+  if (!state.ecosystem) throw new Error('Экосистема мира не инициализирована');
+  const result = takeoverOrganization(state.ecosystem, organizationId, targetShare, state.finance.cash, state.day);
+  return touch({
+    ...state,
+    ecosystem: result.ecosystem,
+    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), corporateSpend: roundMoney(state.finance.corporateSpend + result.cost) },
+  }, now);
+}
+
+export function injectWorldSubsidiaryCapital(state: GameState, organizationId: string, amount: number, now = new Date()): GameState {
+  ensureOperating(state);
+  if (!state.ecosystem) throw new Error('Экосистема мира не инициализирована');
+  const result = injectSubsidiaryCapital(state.ecosystem, organizationId, amount, state.finance.cash, state.day);
+  return touch({
+    ...state,
+    ecosystem: result.ecosystem,
+    finance: { ...state.finance, cash: roundMoney(state.finance.cash - result.cost), corporateSpend: roundMoney(state.finance.corporateSpend + result.cost) },
+  }, now);
+}
+
+export function setWorldSubsidiaryPolicy(state: GameState, organizationId: string, autonomy: SubsidiaryAutonomy, treasuryPolicy: TreasuryPolicy, now = new Date()): GameState {
+  ensureOperating(state);
+  if (!state.ecosystem) throw new Error('Экосистема мира не инициализирована');
+  return touch({ ...state, ecosystem: setSubsidiaryPolicy(state.ecosystem, organizationId, autonomy, treasuryPolicy) }, now);
+}
+
+export function transferWorldGroupAsset(state: GameState, assetId: string, targetOrganizationId: string, now = new Date()): GameState {
+  ensureOperating(state);
+  if (!state.ecosystem) throw new Error('Экосистема мира не инициализирована');
+  const ecosystem = transferGroupAsset(state.ecosystem, assetId, targetOrganizationId, state.day);
+  return touch({
+    ...state,
+    ecosystem,
+    finance: { ...state.finance, dailyFixedCost: calculateDailyFixedCost(state.facility, state.team, ecosystem) },
+  }, now);
+}
+
 export function stockWorldVenue(state: GameState, assetId: string, releaseId: string, units: number, price: number, now = new Date()): GameState {
   ensureOperating(state);
   if (!state.ecosystem) throw new Error('Экосистема мира не инициализирована');
@@ -1134,7 +1180,7 @@ export function migrateGameState(value: unknown): GameState {
   if (!value || typeof value !== 'object') return createInitialState();
   const raw = value as Record<string, unknown>;
   const version = typeof raw.schemaVersion === 'number' ? raw.schemaVersion : 0;
-  if (version < 1 || version > 11) return createInitialState();
+  if (version < 1 || version > 12) return createInitialState();
 
   const day = typeof raw.day === 'number' ? raw.day : 1;
   const phase: GamePhase = raw.phase === 'operating' ? 'operating' : 'onboarding';
@@ -1171,7 +1217,7 @@ export function migrateGameState(value: unknown): GameState {
   const timestamp = new Date().toISOString();
 
   return normalizeCurrentState({
-    schemaVersion: 11,
+    schemaVersion: 12,
     phase,
     mode,
     day,
@@ -1227,7 +1273,7 @@ function normalizeCurrentState(state: GameState): GameState {
   } : null;
   return {
     ...state,
-    schemaVersion: 11,
+    schemaVersion: 12,
     finance: {
       ...state.finance,
       salesRevenue: state.finance.salesRevenue ?? 0,
@@ -1238,6 +1284,7 @@ function normalizeCurrentState(state: GameState): GameState {
       brandSpend: state.finance.brandSpend ?? 0,
       teamSpend: state.finance.teamSpend ?? 0,
       retailSpend: state.finance.retailSpend ?? 0,
+      corporateSpend: state.finance.corporateSpend ?? 0,
       retailRevenue: state.finance.retailRevenue ?? 0,
     },
     production,
@@ -1314,6 +1361,7 @@ function createFinance(cash: number, dailyFixedCost: number): FinanceState {
     brandSpend: 0,
     teamSpend: 0,
     retailSpend: 0,
+    corporateSpend: 0,
     retailRevenue: 0,
     packagedInventoryValue: 0,
     salesRevenue: 0,

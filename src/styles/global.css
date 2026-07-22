@@ -1508,3 +1508,29 @@ body { background:radial-gradient(circle at 55% -12%,rgba(111,24,47,.16),transpa
 .product-flow-row strong { margin-top:2px; color:#ded7da; font-size:.6rem; }
 .product-flow-row em { margin-top:3px; color:#716c73; font-size:.42rem; font-style:normal; }
 .product-flow-row>b { min-width:28px; height:28px; display:grid; place-items:center; border-radius:9px; color:#d1c7cc; background:#151317; border:1px solid var(--line); font-size:.52rem; }
+
+/* Patch 015 — corporate groups */
+.investment-control .field { margin-top:9px; }
+.investment-control .field select,
+.organization-assets select {
+  width:100%;
+  min-height:40px;
+  border:1px solid var(--line);
+  border-radius:11px;
+  background:#0b0b0e;
+  color:#e7dfe3;
+  padding:9px 10px;
+  font-size:.53rem;
+}
+.investment-control>.button { width:100%; margin-top:8px; }
+.organization-assets>div:has(select) {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(110px,.75fr) auto;
+  align-items:center;
+  gap:7px;
+}
+.organization-assets>div:has(select)>span { min-width:0; }
+.organization-assets>div:has(select) .button { min-height:38px; padding:.5rem .7rem; }
+@media (max-width:430px) {
+  .organization-assets>div:has(select) { grid-template-columns:1fr; }
+}

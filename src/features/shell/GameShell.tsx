@@ -90,7 +90,7 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
           />
         )}
         {tab === 'market' && <MarketWorld state={game.state} onSendProposal={game.sendProposal} onAcceptOffer={game.acceptOffer} onDeclineOffer={game.declineOffer} onFulfillOrder={game.fulfillOrder} onCreateBrand={game.createBrand} onCreateRelease={game.createRelease} onLaunchCampaign={game.launchCampaign} />}
-        {tab === 'world' && <WorldHub state={game.state} onAcquire={game.acquireAsset} onLease={game.leaseAsset} onInvest={game.investOrganization} onStock={game.stockWorldVenue} onClean={game.cleanWorldVenue} onUpgrade={game.upgradeWorldVenue} onStatus={game.setWorldVenueStatus} />}
+        {tab === 'world' && <WorldHub state={game.state} onAcquire={game.acquireAsset} onLease={game.leaseAsset} onInvest={game.investOrganization} onTakeover={game.takeoverOrganization} onInject={game.injectSubsidiaryCapital} onPolicy={game.setSubsidiaryPolicy} onTransfer={game.transferGroupAsset} onStock={game.stockWorldVenue} onClean={game.cleanWorldVenue} onUpgrade={game.upgradeWorldVenue} onStatus={game.setWorldVenueStatus} />}
         {tab === 'team' && <TeamHub state={game.state} onHire={game.hireEmployee} onFire={game.fireEmployee} onAssign={game.assignEmployee} onWorkload={game.setWorkload} onAutomation={game.setAutomation} onTrain={game.trainEmployee} />}
         {tab === 'archive' && <ArchiveView state={game.state} version={version} onExport={game.exportSave} onImport={game.importSave} onReset={game.reset} />}
       </main>

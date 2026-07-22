@@ -6,9 +6,12 @@ import {
   controlledVenueStockLimit,
   controlledVenueStockUnits,
   controlledVenueUpgradeCost,
+  controlledShare,
   isPlayerControlledAsset,
   organizationKindLabel,
   type OrganizationState,
+  type SubsidiaryAutonomy,
+  type TreasuryPolicy,
   type WorldAssetState,
 } from '../../domain/ecosystem';
 import { commodityName, inventoryQuantity, productFamilyLabel, type TradeProductState } from '../../domain/trade';
@@ -16,20 +19,24 @@ import type { RetailVenueStatus, RetailVenueType } from '../../domain/retail';
 import { Icon } from '../../ui/Icon';
 import { CompactHeader, EmptyState, MiniStat, Modal, SubTabs } from '../../ui/MobileUI';
 
-type Section = 'city' | 'organizations' | 'flows' | 'control' | 'deals';
+type Section = 'city' | 'organizations' | 'flows' | 'group' | 'control' | 'deals';
 
 interface WorldHubProps {
   state: GameState;
   onAcquire: (assetId: string) => ActionResult;
   onLease: (assetId: string, type: RetailVenueType, name: string) => ActionResult;
   onInvest: (organizationId: string, share: number) => ActionResult;
+  onTakeover: (organizationId: string, targetShare: 51 | 75 | 100) => ActionResult;
+  onInject: (organizationId: string, amount: number) => ActionResult;
+  onPolicy: (organizationId: string, autonomy: SubsidiaryAutonomy, treasuryPolicy: TreasuryPolicy) => ActionResult;
+  onTransfer: (assetId: string, targetOrganizationId: string) => ActionResult;
   onStock: (assetId: string, releaseId: string, units: number, price: number) => ActionResult;
   onClean: (assetId: string) => ActionResult;
   onUpgrade: (assetId: string) => ActionResult;
   onStatus: (assetId: string, status: RetailVenueStatus) => ActionResult;
 }
 
-export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean, onUpgrade, onStatus }: WorldHubProps) {
+export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onInject, onPolicy, onTransfer, onStock, onClean, onUpgrade, onStatus }: WorldHubProps) {
   const [section, setSection] = useState<Section>('city');
   const [assetModal, setAssetModal] = useState<WorldAssetState | null>(null);
   const [organizationModal, setOrganizationModal] = useState<OrganizationState | null>(null);
@@ -41,6 +48,7 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean
   if (!ecosystem) return <EmptyState icon="map" title="Мир ещё не создан" text="Заверши создание компании, чтобы загрузить организации и недвижимость региона." />;
 
   const controlledAssets = ecosystem.assets.filter((asset) => isPlayerControlledAsset(ecosystem, asset));
+  const subsidiaries = ecosystem.subsidiaries.map((control) => ({ control, organization: ecosystem.organizations.find((organization) => organization.id === control.organizationId) })).filter((item): item is { control: typeof ecosystem.subsidiaries[number]; organization: OrganizationState } => Boolean(item.organization));
   const commercialAssets = ecosystem.assets.filter((asset) => ['bar', 'shop', 'vacant_commercial', 'warehouse', 'laboratory'].includes(asset.type));
   const organizations = ecosystem.organizations.filter((organization) => organization.id !== ecosystem.playerOrganizationId);
   const saleAssets = commercialAssets.filter((asset) => asset.status === 'for_sale' || asset.status === 'vacant').length;
@@ -82,6 +90,7 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean
         { id: 'city', label: 'Город', badge: saleAssets },
         { id: 'organizations', label: 'Компании', badge: strainedOrganizations },
         { id: 'flows', label: 'Цепочки', badge: bottlenecks },
+        { id: 'group', label: 'Группа', badge: subsidiaries.length },
         { id: 'control', label: 'Контроль', badge: controlledAssets.length },
         { id: 'deals', label: 'Сделки' },
       ]} />
@@ -116,7 +125,7 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean
           {organizations
             .sort((a, b) => organizationPriority(a) - organizationPriority(b))
             .map((organization) => {
-              const share = ecosystem.holdings.filter((holding) => holding.organizationId === organization.id).reduce((sum, holding) => sum + holding.share, 0);
+              const share = controlledShare(ecosystem, organization.id);
               return (
                 <button key={organization.id} className={`ecosystem-row glass-card organization ${organization.status}`} onClick={() => setOrganizationModal(organization)}>
                   <span className="ecosystem-glyph"><Icon name={organization.kind === 'producer' ? 'factory' : organization.kind === 'hospitality' ? 'beer' : organization.kind === 'retailer' ? 'store' : 'handshake'} /></span>
@@ -174,6 +183,22 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean
                 </>}
           </article>
         </section>
+      )}
+
+      {section === 'group' && (
+        subsidiaries.length === 0
+          ? <section className="glass-card"><EmptyState icon="handshake" title="Группа ещё не создана" text="Купи контрольный пакет работающей компании. Её активы, сотрудники, продукты и контракты останутся внутри мира." /></section>
+          : <section className="controlled-assets">
+              {subsidiaries.map(({ control, organization }) => {
+                const assets = ecosystem.assets.filter((asset) => asset.ownerOrganizationId === organization.id);
+                const products = ecosystem.trade.products.filter((product) => product.producerOrganizationId === organization.id && product.status === 'active');
+                return <article key={organization.id} className="controlled-asset-card glass-card">
+                  <header><div><span>дочерняя компания · {control.controlShare}%</span><strong>{organization.name}</strong></div><span className={`row-status ${organization.status === 'active' ? 'positive' : 'neutral'}`}>{statusLabel(organization.status)}</span></header>
+                  <div className="detail-grid"><Detail label="Активы" value={String(assets.length)} /><Detail label="Продукты" value={String(products.length)} /><Detail label="Деньги" value={formatMoney(organization.cash)} /><Detail label="Долг" value={formatMoney(organization.debt)} /></div>
+                  <div className="controlled-actions"><button className="button primary" onClick={() => setOrganizationModal(organization)}>Управление</button></div>
+                </article>;
+              })}
+            </section>
       )}
 
       {section === 'control' && (
@@ -236,10 +261,15 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onStock, onClean
           organization={organizationModal}
           assets={ecosystem.assets.filter((asset) => organizationModal.assetIds.includes(asset.id))}
           ecosystem={ecosystem}
-          currentShare={ecosystem.holdings.filter((holding) => holding.organizationId === organizationModal.id).reduce((sum, holding) => sum + holding.share, 0)}
+          currentShare={controlledShare(ecosystem, organizationModal.id)}
           cash={state.finance.cash}
           onClose={() => setOrganizationModal(null)}
-          onInvest={(share) => act(onInvest(organizationModal.id, share))}
+          controlledOrganizations={[ecosystem.organizations.find((organization) => organization.id === ecosystem.playerOrganizationId)!, ...subsidiaries.map((item) => item.organization)]}
+          onInvest={(share) => act(onInvest(organizationModal.id, share), false)}
+          onTakeover={(targetShare) => act(onTakeover(organizationModal.id, targetShare), false)}
+          onInject={(amount) => act(onInject(organizationModal.id, amount), false)}
+          onPolicy={(autonomy, treasuryPolicy) => act(onPolicy(organizationModal.id, autonomy, treasuryPolicy), false)}
+          onTransfer={(assetId, targetOrganizationId) => act(onTransfer(assetId, targetOrganizationId), false)}
         />
       )}
       {productModal && <ProductModal product={productModal} ecosystem={ecosystem} onClose={() => setProductModal(null)} />}
@@ -268,18 +298,58 @@ function AssetModal({ asset, owner, ecosystem, cash, controlled, onClose, onAcqu
   );
 }
 
-function OrganizationModal({ organization, assets, ecosystem, currentShare, cash, onClose, onInvest }: { organization: OrganizationState; assets: WorldAssetState[]; ecosystem: NonNullable<GameState['ecosystem']>; currentShare: number; cash: number; onClose: () => void; onInvest: (share: number) => void }) {
+function OrganizationModal({ organization, assets, ecosystem, currentShare, cash, controlledOrganizations, onClose, onInvest, onTakeover, onInject, onPolicy, onTransfer }: {
+  organization: OrganizationState;
+  assets: WorldAssetState[];
+  ecosystem: NonNullable<GameState['ecosystem']>;
+  currentShare: number;
+  cash: number;
+  controlledOrganizations: OrganizationState[];
+  onClose: () => void;
+  onInvest: (share: number) => void;
+  onTakeover: (targetShare: 51 | 75 | 100) => void;
+  onInject: (amount: number) => void;
+  onPolicy: (autonomy: SubsidiaryAutonomy, treasuryPolicy: TreasuryPolicy) => void;
+  onTransfer: (assetId: string, targetOrganizationId: string) => void;
+}) {
   const [share, setShare] = useState(10);
-  const discount = organization.status === 'insolvent' ? .52 : organization.status === 'strained' ? .76 : 1;
-  const cost = organization.valuation * (share / 100) * discount;
+  const [takeoverTarget, setTakeoverTarget] = useState<51 | 75 | 100>(51);
+  const [injection, setInjection] = useState(10_000);
+  const subsidiary = ecosystem.subsidiaries.find((item) => item.organizationId === organization.id);
+  const [autonomy, setAutonomy] = useState<SubsidiaryAutonomy>(subsidiary?.autonomy ?? 'autonomous');
+  const [treasuryPolicy, setTreasuryPolicy] = useState<TreasuryPolicy>(subsidiary?.treasuryPolicy ?? 'balanced');
+  const statusMultiplier = organization.status === 'insolvent' ? .58 : organization.status === 'strained' ? .82 : 1.22;
+  const investmentDiscount = organization.status === 'insolvent' ? .52 : organization.status === 'strained' ? .76 : 1;
+  const investmentCost = organization.valuation * (share / 100) * investmentDiscount;
+  const takeoverCost = organization.valuation * (Math.max(0, takeoverTarget - currentShare) / 100) * statusMultiplier * (takeoverTarget >= 75 ? 1.08 : 1);
+  const controlled = currentShare >= 51;
+
   return (
-    <Modal title={organization.name} kicker={`${organizationKindLabel(organization.kind)} · ${statusLabel(organization.status)}`} onClose={onClose} footer={<button className="button primary" disabled={cash < cost || currentShare + share > 49} onClick={() => onInvest(share)}>Купить {share}% · {formatMoney(cost)}</button>}>
+    <Modal title={organization.name} kicker={`${organizationKindLabel(organization.kind)} · ${statusLabel(organization.status)}`} onClose={onClose}>
       <div className="detail-grid"><Detail label="Владелец" value={organization.ownerLabel} /><Detail label="Оценка" value={formatMoney(organization.valuation)} /><Detail label="Деньги" value={formatMoney(organization.cash)} /><Detail label="Долг" value={formatMoney(organization.debt)} /><Detail label="Выручка/д" value={formatMoney(organization.dailyRevenue)} /><Detail label="Расход/д" value={formatMoney(organization.dailyCosts)} /></div>
       <div className="organization-assets"><span>Объекты</span>{assets.length === 0 ? <small>Собственной недвижимости нет.</small> : assets.map((asset) => <div key={asset.id}><strong>{asset.name}</strong><small>{assetTypeLabel(asset.type)} · {asset.city} · {asset.status === 'for_sale' ? 'продаётся' : 'работает'}</small></div>)}</div>
-      <div className="organization-assets"><span>Цепочка операций</span>{ecosystem.trade.products.filter((product) => product.producerOrganizationId === organization.id).map((product) => <div key={product.id}><strong>{product.name}</strong><small>{productFamilyLabel(product.family)} · склад {Math.round(inventoryQuantity(ecosystem.trade, organization.id, 'product', product.id))} · продано {product.totalSold}</small></div>)}{ecosystem.trade.contracts.filter((contract) => contract.buyerOrganizationId === organization.id || contract.sellerOrganizationId === organization.id).slice(0, 6).map((contract) => { const counterpartyId = contract.sellerOrganizationId === organization.id ? contract.buyerOrganizationId : contract.sellerOrganizationId; const counterparty = ecosystem.organizations.find((item) => item.id === counterpartyId); return <div key={contract.id}><strong>{contract.sellerOrganizationId === organization.id ? 'Поставляет' : 'Покупает'}: {commodityName(ecosystem.trade, contract.commodityKind, contract.commodityId)}</strong><small>{counterparty?.name} · каждые {contract.intervalDays} дн. · {contract.lastResult}</small></div>; })}{ecosystem.trade.batches.filter((batch) => batch.producerOrganizationId === organization.id && batch.status !== 'ready').slice(0, 3).map((batch) => { const product = ecosystem.trade.products.find((item) => item.id === batch.productId); return <div key={batch.id}><strong>{batch.status === 'blocked' ? 'Остановка' : 'В производстве'}: {product?.name}</strong><small>{batch.issue ?? `готовность день ${batch.readyDay}`}</small></div>; })}</div>
-      <div className="investment-control"><span>Твоя доля сейчас: {currentShare}%</span><div className="choice-pills">{[10, 25, 40].map((value) => <button key={value} className={share === value ? 'active' : ''} disabled={currentShare + value > 49} onClick={() => setShare(value)}>{value}%</button>)}</div><small>Доля даёт часть прибыли, но не управление активами. Операционный контроль появляется только после выкупа объекта.</small></div>
+      <div className="organization-assets"><span>Цепочка операций</span>{ecosystem.trade.products.filter((product) => product.producerOrganizationId === organization.id).map((product) => <div key={product.id}><strong>{product.name}</strong><small>{productFamilyLabel(product.family)} · склад {Math.round(inventoryQuantity(ecosystem.trade, organization.id, 'product', product.id))} · продано {product.totalSold}</small></div>)}{ecosystem.trade.contracts.filter((contract) => contract.buyerOrganizationId === organization.id || contract.sellerOrganizationId === organization.id).slice(0, 6).map((contract) => { const counterpartyId = contract.sellerOrganizationId === organization.id ? contract.buyerOrganizationId : contract.sellerOrganizationId; const counterparty = ecosystem.organizations.find((item) => item.id === counterpartyId); return <div key={contract.id}><strong>{contract.sellerOrganizationId === organization.id ? 'Поставляет' : 'Покупает'}: {commodityName(ecosystem.trade, contract.commodityKind, contract.commodityId)}</strong><small>{counterparty?.name} · каждые {contract.intervalDays} дн. · {contract.lastResult}</small></div>; })}</div>
+
+      {!controlled && <>
+        <div className="investment-control"><span>Миноритарная доля: сейчас {currentShare}%</span><div className="choice-pills">{[10, 25, 40].map((value) => <button key={value} className={share === value ? 'active' : ''} disabled={currentShare + value > 49} onClick={() => setShare(value)}>{value}%</button>)}</div><button className="button secondary" disabled={cash < investmentCost || currentShare + share > 49} onClick={() => onInvest(share)}>Купить долю · {formatMoney(investmentCost)}</button></div>
+        <div className="investment-control"><span>Контрольная сделка</span><div className="choice-pills">{([51, 75, 100] as const).map((value) => <button key={value} className={takeoverTarget === value ? 'active' : ''} disabled={currentShare >= value} onClick={() => setTakeoverTarget(value)}>{value}%</button>)}</div><small>Компания сохранит сотрудников, объекты, продукты, контракты и собственный денежный поток.</small><button className="button primary" disabled={cash < takeoverCost || currentShare >= takeoverTarget} onClick={() => onTakeover(takeoverTarget)}>Получить контроль · {formatMoney(takeoverCost)}</button></div>
+      </>}
+
+      {controlled && subsidiary && <div className="investment-control"><span>Управление дочерней компанией · {currentShare}%</span>
+        <label className="field"><span>Автономность</span><select value={autonomy} onChange={(event) => setAutonomy(event.target.value as SubsidiaryAutonomy)}><option value="autonomous">Автономная</option><option value="guided">Управляемая</option><option value="integrated">Интегрированная</option></select></label>
+        <label className="field"><span>Казначейство</span><select value={treasuryPolicy} onChange={(event) => setTreasuryPolicy(event.target.value as TreasuryPolicy)}><option value="retain">Оставлять прибыль</option><option value="balanced">Баланс</option><option value="sweep">Изымать прибыль</option></select></label>
+        <button className="button secondary" onClick={() => onPolicy(autonomy, treasuryPolicy)}>Применить политику</button>
+        <label className="field"><span>Докапитализация</span><input type="number" min={5000} step={5000} value={injection} onChange={(event) => setInjection(Number(event.target.value))} /></label>
+        <button className="button primary" disabled={cash < injection || injection < 5000} onClick={() => onInject(injection)}>Внести {formatMoney(injection)}</button>
+        {assets.length > 0 && controlledOrganizations.length > 1 && <div className="organization-assets"><span>Передача активов внутри группы</span>{assets.map((asset) => <AssetTransferRow key={asset.id} asset={asset} organizations={controlledOrganizations.filter((item) => item.id !== organization.id)} onTransfer={onTransfer} />)}</div>}
+      </div>}
     </Modal>
   );
+}
+
+function AssetTransferRow({ asset, organizations, onTransfer }: { asset: WorldAssetState; organizations: OrganizationState[]; onTransfer: (assetId: string, targetOrganizationId: string) => void }) {
+  const [target, setTarget] = useState(organizations[0]?.id ?? '');
+  return <div><span><strong>{asset.name}</strong><small>{assetTypeLabel(asset.type)} · {asset.city}</small></span><select value={target} onChange={(event) => setTarget(event.target.value)}>{organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}</select><button className="button ghost compact-button" disabled={!target} onClick={() => onTransfer(asset.id, target)}>Передать</button></div>;
 }
 
 function ProductModal({ product, ecosystem, onClose }: { product: TradeProductState; ecosystem: NonNullable<GameState['ecosystem']>; onClose: () => void }) {

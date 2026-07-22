@@ -5,7 +5,11 @@ import {
   advanceEcosystemDay,
   createEcosystemState,
   investInOrganization,
+  injectSubsidiaryCapital,
   leaseVacantAsset,
+  setSubsidiaryPolicy,
+  takeoverOrganization,
+  transferGroupAsset,
 } from './ecosystem';
 import { createBrandState } from './brand';
 
@@ -65,6 +69,45 @@ describe('ecosystem', () => {
     const result = investInOrganization(state, organization.id, 10, 1_000_000, 2);
     expect(result.ecosystem.holdings[0]?.share).toBe(10);
     expect(result.ecosystem.assets.some((asset) => asset.operatorOrganizationId === state.playerOrganizationId && asset.ownerOrganizationId === organization.id)).toBe(false);
+  });
+
+  it('покупает контрольный пакет без разрушения действующей компании', () => {
+    const state = createWorld();
+    const organization = state.organizations.find((item) => item.kind === 'producer');
+    if (!organization) throw new Error('producer missing');
+    const beforeProducts = state.trade.products.filter((product) => product.producerOrganizationId === organization.id).length;
+    const result = takeoverOrganization(state, organization.id, 51, 1_000_000, 2);
+    expect(result.ecosystem.subsidiaries[0]?.organizationId).toBe(organization.id);
+    expect(result.ecosystem.subsidiaries[0]?.controlShare).toBe(51);
+    expect(result.ecosystem.organizations.find((item) => item.id === organization.id)?.assetIds).toEqual(organization.assetIds);
+    expect(result.ecosystem.trade.products.filter((product) => product.producerOrganizationId === organization.id)).toHaveLength(beforeProducts);
+  });
+
+  it('докапитализирует дочернюю компанию и сокращает её долг', () => {
+    const state = createWorld();
+    const organization = state.organizations.find((item) => item.kind === 'producer');
+    if (!organization) throw new Error('producer missing');
+    const controlled = takeoverOrganization(state, organization.id, 51, 1_000_000, 2).ecosystem;
+    const before = controlled.organizations.find((item) => item.id === organization.id)!;
+    const result = injectSubsidiaryCapital(controlled, organization.id, 20_000, 1_000_000, 3);
+    const after = result.ecosystem.organizations.find((item) => item.id === organization.id)!;
+    expect(after.cash).toBeGreaterThan(before.cash);
+    expect(after.debt).toBeLessThan(before.debt);
+    expect(result.ecosystem.subsidiaries[0]?.capitalInjected).toBe(20_000);
+  });
+
+  it('меняет политику дочерней компании и переводит коммерческий актив внутри группы', () => {
+    const state = createWorld();
+    const organization = state.organizations.find((item) => item.kind === 'hospitality');
+    if (!organization) throw new Error('hospitality organization missing');
+    let ecosystem = takeoverOrganization(state, organization.id, 75, 1_000_000, 2).ecosystem;
+    ecosystem = setSubsidiaryPolicy(ecosystem, organization.id, 'integrated', 'sweep');
+    const assetId = organization.assetIds[0];
+    if (!assetId) throw new Error('asset missing');
+    ecosystem = transferGroupAsset(ecosystem, assetId, ecosystem.playerOrganizationId, 3);
+    expect(ecosystem.subsidiaries[0]?.autonomy).toBe('integrated');
+    expect(ecosystem.subsidiaries[0]?.treasuryPolicy).toBe('sweep');
+    expect(ecosystem.assets.find((asset) => asset.id === assetId)?.ownerOrganizationId).toBe(ecosystem.playerOrganizationId);
   });
 
   it('двигает деньги NPC и выставляет проблемные активы на продажу', () => {

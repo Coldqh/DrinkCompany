@@ -21,6 +21,10 @@ import {
   acquireWorldAsset,
   leaseWorldAsset,
   investWorldOrganization,
+  takeoverWorldOrganization,
+  injectWorldSubsidiaryCapital,
+  setWorldSubsidiaryPolicy,
+  transferWorldGroupAsset,
   stockWorldVenue,
   cleanWorldVenue,
   upgradeWorldVenue,
@@ -50,6 +54,7 @@ import type { IngredientCategory } from '../data/supplyCatalog';
 import type { ProposalInput } from '../domain/market';
 import type { BrandDraft, CampaignType, ReleaseDraft } from '../domain/brand';
 import type { RetailVenueStatus, RetailVenueType } from '../domain/retail';
+import type { SubsidiaryAutonomy, TreasuryPolicy } from '../domain/ecosystem';
 import type { ShiftId, TeamAutomation, TeamDepartment, TrainingTrack, Workload } from '../domain/team';
 import { loadGameState, parseGameState, saveGameState, serializeGameState } from '../infrastructure/gameStateRepository';
 
@@ -99,6 +104,10 @@ export interface GameController {
   acquireAsset: (assetId: string) => ActionResult;
   leaseAsset: (assetId: string, type: RetailVenueType, name: string) => ActionResult;
   investOrganization: (organizationId: string, share: number) => ActionResult;
+  takeoverOrganization: (organizationId: string, targetShare: 51 | 75 | 100) => ActionResult;
+  injectSubsidiaryCapital: (organizationId: string, amount: number) => ActionResult;
+  setSubsidiaryPolicy: (organizationId: string, autonomy: SubsidiaryAutonomy, treasuryPolicy: TreasuryPolicy) => ActionResult;
+  transferGroupAsset: (assetId: string, targetOrganizationId: string) => ActionResult;
   stockWorldVenue: (assetId: string, releaseId: string, units: number, price: number) => ActionResult;
   cleanWorldVenue: (assetId: string) => ActionResult;
   upgradeWorldVenue: (assetId: string) => ActionResult;
@@ -297,6 +306,22 @@ export function useGameState(): GameController {
     perform((current) => investWorldOrganization(current, organizationId, share), `Куплено ${share}% компании`)
   ), [perform]);
 
+  const takeoverOrganizationAction = useCallback((organizationId: string, targetShare: 51 | 75 | 100) => (
+    perform((current) => takeoverWorldOrganization(current, organizationId, targetShare), `Получен контроль: ${targetShare}%`)
+  ), [perform]);
+
+  const injectSubsidiaryCapitalAction = useCallback((organizationId: string, amount: number) => (
+    perform((current) => injectWorldSubsidiaryCapital(current, organizationId, amount), 'Дочерняя компания получила капитал')
+  ), [perform]);
+
+  const setSubsidiaryPolicyAction = useCallback((organizationId: string, autonomy: SubsidiaryAutonomy, treasuryPolicy: TreasuryPolicy) => (
+    perform((current) => setWorldSubsidiaryPolicy(current, organizationId, autonomy, treasuryPolicy), 'Политика дочерней компании обновлена')
+  ), [perform]);
+
+  const transferGroupAssetAction = useCallback((assetId: string, targetOrganizationId: string) => (
+    perform((current) => transferWorldGroupAsset(current, assetId, targetOrganizationId), 'Актив передан внутри группы')
+  ), [perform]);
+
   const stockWorldVenueAction = useCallback((assetId: string, releaseId: string, units: number, price: number) => (
     perform((current) => stockWorldVenue(current, assetId, releaseId, units, price), 'Продукт передан на полку объекта')
   ), [perform]);
@@ -374,6 +399,10 @@ export function useGameState(): GameController {
     acquireAsset: acquireAssetAction,
     leaseAsset: leaseAssetAction,
     investOrganization: investOrganizationAction,
+    takeoverOrganization: takeoverOrganizationAction,
+    injectSubsidiaryCapital: injectSubsidiaryCapitalAction,
+    setSubsidiaryPolicy: setSubsidiaryPolicyAction,
+    transferGroupAsset: transferGroupAssetAction,
     stockWorldVenue: stockWorldVenueAction,
     cleanWorldVenue: cleanWorldVenueAction,
     upgradeWorldVenue: upgradeWorldVenueAction,

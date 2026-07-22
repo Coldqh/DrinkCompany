@@ -25,7 +25,9 @@ export type OrganizationKind = 'player' | 'producer' | 'hospitality' | 'retailer
 export type OrganizationStatus = 'active' | 'strained' | 'insolvent' | 'acquired';
 export type AssetType = 'production' | 'bar' | 'shop' | 'warehouse' | 'laboratory' | 'office' | 'vacant_commercial';
 export type AssetStatus = 'operating' | 'closed' | 'for_sale' | 'vacant';
-export type DealKind = 'acquisition' | 'lease' | 'investment' | 'npc_acquisition' | 'bankruptcy';
+export type DealKind = 'acquisition' | 'lease' | 'investment' | 'takeover' | 'capital_injection' | 'asset_transfer' | 'npc_acquisition' | 'bankruptcy';
+export type SubsidiaryAutonomy = 'autonomous' | 'guided' | 'integrated';
+export type TreasuryPolicy = 'retain' | 'balanced' | 'sweep';
 
 export interface OrganizationState {
   id: string;
@@ -79,6 +81,15 @@ export interface EquityHolding {
   cost: number;
 }
 
+export interface SubsidiaryControl {
+  organizationId: string;
+  controlShare: number;
+  acquiredDay: number;
+  autonomy: SubsidiaryAutonomy;
+  treasuryPolicy: TreasuryPolicy;
+  capitalInjected: number;
+}
+
 export interface EcosystemTransaction {
   id: string;
   day: number;
@@ -97,6 +108,7 @@ export interface EcosystemState {
   organizations: OrganizationState[];
   assets: WorldAssetState[];
   holdings: EquityHolding[];
+  subsidiaries: SubsidiaryControl[];
   transactions: EcosystemTransaction[];
   retailReports: RetailDayReport[];
   nextAssetNumber: number;
@@ -352,6 +364,7 @@ export function createEcosystemState(input: {
     organizations,
     assets,
     holdings: [],
+    subsidiaries: [],
     transactions: [],
     retailReports: [],
     nextAssetNumber: 1,
@@ -419,7 +432,7 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
   const trade = state.trade && Array.isArray(state.trade.products)
     ? normalizeTradeState(state.trade)
     : createTradeState(state.organizations, state.assets, day);
-  return { ...state, trade };
+  return { ...state, subsidiaries: state.subsidiaries ?? [], trade };
 }
 
 export function ecosystemPlayerDailyCost(state: EcosystemState): number {
@@ -428,14 +441,30 @@ export function ecosystemPlayerDailyCost(state: EcosystemState): number {
     .reduce((sum, asset) => sum + asset.dailyOperatingCost + (asset.ownerOrganizationId === state.playerOrganizationId ? 0 : asset.dailyRent), 0));
 }
 
+export function controlledShare(state: EcosystemState, organizationId: string): number {
+  if (organizationId === state.playerOrganizationId) return 100;
+  return state.holdings.filter((holding) => holding.organizationId === organizationId).reduce((sum, holding) => sum + holding.share, 0);
+}
+
+export function isPlayerControlledOrganization(state: EcosystemState, organizationId: string | null): boolean {
+  if (!organizationId) return false;
+  return organizationId === state.playerOrganizationId || state.subsidiaries.some((subsidiary) => subsidiary.organizationId === organizationId && subsidiary.controlShare >= 51);
+}
+
 export function isPlayerControlledAsset(state: EcosystemState, asset: WorldAssetState): boolean {
   return asset.operatorOrganizationId === state.playerOrganizationId;
 }
+
+export function isPlayerGroupAsset(state: EcosystemState, asset: WorldAssetState): boolean {
+  return isPlayerControlledOrganization(state, asset.operatorOrganizationId);
+}
+
 
 export function acquireAsset(state: EcosystemState, assetId: string, cash: number, day: number): { ecosystem: EcosystemState; cost: number } {
   const asset = getAsset(state, assetId);
   if (asset.type !== 'bar' && asset.type !== 'shop' && asset.type !== 'warehouse' && asset.type !== 'laboratory') throw new Error('Этот объект нельзя приобрести напрямую');
   if (isPlayerControlledAsset(state, asset)) throw new Error('Объект уже находится под твоим контролем');
+  if (isPlayerControlledOrganization(state, asset.ownerOrganizationId)) throw new Error('Объект уже находится внутри группы — используй внутреннюю передачу');
   if (asset.status !== 'for_sale' && asset.status !== 'operating') throw new Error('Владелец не рассматривает продажу');
   const seller = asset.ownerOrganizationId ? state.organizations.find((org) => org.id === asset.ownerOrganizationId) : null;
   const distressDiscount = seller?.status === 'insolvent' ? .68 : seller?.status === 'strained' ? .84 : 1;
@@ -505,6 +534,94 @@ export function investInOrganization(state: EcosystemState, organizationId: stri
       nextHoldingNumber: state.nextHoldingNumber + 1,
       nextTransactionNumber: state.nextTransactionNumber + 1,
     },
+  };
+}
+
+
+export function takeoverOrganization(state: EcosystemState, organizationId: string, targetShare: 51 | 75 | 100, cash: number, day: number): { ecosystem: EcosystemState; cost: number } {
+  const organization = getOrganization(state, organizationId);
+  if (organization.id === state.playerOrganizationId) throw new Error('Собственную компанию нельзя поглотить');
+  const currentShare = controlledShare(state, organizationId);
+  if (currentShare >= targetShare) throw new Error(`У тебя уже есть не меньше ${targetShare}% компании`);
+  const additionalShare = targetShare - currentShare;
+  const statusMultiplier = organization.status === 'insolvent' ? .58 : organization.status === 'strained' ? .82 : 1.22;
+  const controlPremium = targetShare >= 75 ? 1.08 : 1;
+  const cost = roundMoney(organization.valuation * (additionalShare / 100) * statusMultiplier * controlPremium);
+  if (cash < cost) throw new Error('Недостаточно денег для контрольной сделки');
+
+  const holding: EquityHolding = { id: `holding-${day}-${state.nextHoldingNumber}`, organizationId, share: additionalShare, acquiredDay: day, cost };
+  const existing = state.subsidiaries.find((item) => item.organizationId === organizationId);
+  const subsidiary: SubsidiaryControl = existing
+    ? { ...existing, controlShare: targetShare }
+    : { organizationId, controlShare: targetShare, acquiredDay: day, autonomy: 'autonomous', treasuryPolicy: 'balanced', capitalInjected: 0 };
+  const player = getOrganization(state, state.playerOrganizationId);
+  const transaction = createTransaction(state, day, 'takeover', state.playerOrganizationId, organizationId, null, organizationId, cost, `Получен контроль над ${organization.name}`, `${targetShare}% капитала перешли группе ${player.name}. Компания продолжает работать со своими активами, сотрудниками и контрактами.`);
+
+  return {
+    cost,
+    ecosystem: {
+      ...state,
+      holdings: [...state.holdings, holding],
+      subsidiaries: [...state.subsidiaries.filter((item) => item.organizationId !== organizationId), subsidiary],
+      organizations: state.organizations.map((item) => item.id === organizationId
+        ? { ...item, ownerLabel: `группа ${player.name}`, status: item.status === 'acquired' ? 'active' : item.status }
+        : item),
+      transactions: [transaction, ...state.transactions].slice(0, 160),
+      nextHoldingNumber: state.nextHoldingNumber + 1,
+      nextTransactionNumber: state.nextTransactionNumber + 1,
+    },
+  };
+}
+
+export function injectSubsidiaryCapital(state: EcosystemState, organizationId: string, amount: number, cash: number, day: number): { ecosystem: EcosystemState; cost: number } {
+  if (!isPlayerControlledOrganization(state, organizationId) || organizationId === state.playerOrganizationId) throw new Error('Капитал можно вносить только в контролируемую дочернюю компанию');
+  if (!Number.isFinite(amount) || amount < 5_000) throw new Error('Минимальный взнос — 5 000');
+  if (cash < amount) throw new Error('Недостаточно денег для докапитализации');
+  const organization = getOrganization(state, organizationId);
+  const transaction = createTransaction(state, day, 'capital_injection', state.playerOrganizationId, null, null, organizationId, amount, `${organization.name} получила капитал`, `Группа внесла ${roundMoney(amount)} для оборотных средств и сокращения долга.`);
+  return {
+    cost: roundMoney(amount),
+    ecosystem: {
+      ...state,
+      organizations: state.organizations.map((item) => item.id === organizationId ? {
+        ...item,
+        cash: roundMoney(item.cash + amount * .72),
+        debt: Math.max(0, roundMoney(item.debt - amount * .28)),
+        status: item.status === 'insolvent' && item.debt - amount * .28 < item.valuation * .72 ? 'strained' : item.status,
+      } : item),
+      subsidiaries: state.subsidiaries.map((item) => item.organizationId === organizationId ? { ...item, capitalInjected: roundMoney(item.capitalInjected + amount) } : item),
+      transactions: [transaction, ...state.transactions].slice(0, 160),
+      nextTransactionNumber: state.nextTransactionNumber + 1,
+    },
+  };
+}
+
+export function setSubsidiaryPolicy(state: EcosystemState, organizationId: string, autonomy: SubsidiaryAutonomy, treasuryPolicy: TreasuryPolicy): EcosystemState {
+  if (!isPlayerControlledOrganization(state, organizationId) || organizationId === state.playerOrganizationId) throw new Error('Политика доступна только для дочерней компании');
+  return {
+    ...state,
+    subsidiaries: state.subsidiaries.map((item) => item.organizationId === organizationId ? { ...item, autonomy, treasuryPolicy } : item),
+  };
+}
+
+export function transferGroupAsset(state: EcosystemState, assetId: string, targetOrganizationId: string, day: number): EcosystemState {
+  const asset = getAsset(state, assetId);
+  const sourceOrganizationId = asset.ownerOrganizationId;
+  if (asset.type === 'production') throw new Error('Производственный комплекс остаётся внутри своей компании и передаётся только вместе с ней');
+  if (!isPlayerControlledOrganization(state, sourceOrganizationId) || !isPlayerControlledOrganization(state, targetOrganizationId)) throw new Error('Передача возможна только внутри контролируемой группы');
+  if (sourceOrganizationId === targetOrganizationId) throw new Error('Объект уже принадлежит выбранной компании');
+  const target = getOrganization(state, targetOrganizationId);
+  const transaction = createTransaction(state, day, 'asset_transfer', targetOrganizationId, sourceOrganizationId, assetId, targetOrganizationId, 0, `${asset.name} передан внутри группы`, `${target.name} получила право собственности и операционный контроль без внешней продажи.`);
+  return {
+    ...state,
+    organizations: state.organizations.map((organization) => {
+      if (organization.id === sourceOrganizationId) return { ...organization, assetIds: organization.assetIds.filter((id) => id !== assetId), valuation: Math.max(0, organization.valuation - Math.round(asset.askingPrice * .8)) };
+      if (organization.id === targetOrganizationId) return { ...organization, assetIds: unique([...organization.assetIds, assetId]), valuation: organization.valuation + Math.round(asset.askingPrice * .8) };
+      return organization;
+    }),
+    assets: state.assets.map((item) => item.id === assetId ? { ...item, ownerOrganizationId: targetOrganizationId, operatorOrganizationId: targetOrganizationId } : item),
+    transactions: [transaction, ...state.transactions].slice(0, 160),
+    nextTransactionNumber: state.nextTransactionNumber + 1,
   };
 }
 
@@ -611,7 +728,7 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   }
 
   if (day % 6 === 0) {
-    const targetAsset = assets.find((asset) => asset.status === 'for_sale' && asset.operatorOrganizationId !== ecosystem.playerOrganizationId);
+    const targetAsset = assets.find((asset) => asset.status === 'for_sale' && !isPlayerControlledOrganization(ecosystem, asset.operatorOrganizationId) && !isPlayerControlledOrganization(ecosystem, asset.ownerOrganizationId));
     const buyer = organizations
       .filter((org) => org.status === 'active' && org.kind !== 'player' && org.cash > (targetAsset?.askingPrice ?? Infinity) * .75)
       .sort((a, b) => b.cash - a.cash)[0];
@@ -632,13 +749,19 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   }
 
   let dividend = 0;
-  for (const holding of ecosystem.holdings) {
-    const organization = organizations.find((org) => org.id === holding.organizationId);
-    if (!organization || organization.status !== 'active') continue;
+  const holdingsByOrganization = new Map<string, number>();
+  for (const holding of ecosystem.holdings) holdingsByOrganization.set(holding.organizationId, (holdingsByOrganization.get(holding.organizationId) ?? 0) + holding.share);
+  organizations = organizations.map((organization) => {
+    const share = holdingsByOrganization.get(organization.id) ?? 0;
+    if (share <= 0 || organization.status !== 'active') return organization;
     const operatingProfit = Math.max(0, organization.dailyRevenue - organization.dailyCosts);
-    dividend += operatingProfit * (holding.share / 100) * .2;
-  }
-  if (dividend >= 1) events.push({ tone: 'market', title: 'Доли принесли денежный поток', detail: `Портфель компаний перечислил ${roundMoney(dividend)}.` });
+    const subsidiary = ecosystem.subsidiaries.find((item) => item.organizationId === organization.id);
+    const payoutRatio = subsidiary?.treasuryPolicy === 'retain' ? 0 : subsidiary?.treasuryPolicy === 'sweep' ? .55 : subsidiary ? .28 : .2;
+    const payout = Math.min(Math.max(0, organization.cash) * .08, operatingProfit * payoutRatio) * (share / 100);
+    dividend += payout;
+    return { ...organization, cash: roundMoney(organization.cash - payout) };
+  });
+  if (dividend >= 1) events.push({ tone: 'market', title: 'Группа получила дивиденды', detail: `Контролируемые и миноритарные доли перечислили ${roundMoney(dividend)}.` });
 
   ecosystem = { ...ecosystem, organizations, assets, transactions, nextTransactionNumber };
   return {
