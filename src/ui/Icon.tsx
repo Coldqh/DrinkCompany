@@ -1,8 +1,9 @@
 import type { ReactNode, SVGProps } from 'react';
 
-type IconName = 'home' | 'factory' | 'batch' | 'market' | 'archive' | 'wallet' | 'clock' | 'spark' | 'kettle' | 'press' | 'tank' | 'bottle' | 'lab' | 'beer' | 'apple' | 'arrow' | 'check' | 'warning' | 'close' | 'store' | 'handshake' | 'sample' | 'contract' | 'map';
+type IconName = 'home' | 'team' | 'factory' | 'batch' | 'market' | 'archive' | 'wallet' | 'clock' | 'spark' | 'kettle' | 'press' | 'tank' | 'bottle' | 'lab' | 'beer' | 'apple' | 'arrow' | 'check' | 'warning' | 'close' | 'store' | 'handshake' | 'sample' | 'contract' | 'map';
 
 const paths: Record<IconName, ReactNode> = {
+  team: <><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20c0-4 2.5-6 6-6s6 2 6 6"/><path d="M14 15c3.7-.7 6 1.1 7 4"/></>,
   home: <><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V21h13V9.5"/><path d="M9 21v-6h6v6"/></>,
   factory: <><path d="M3 21V9l6 3V8l6 4V5h6v16Z"/><path d="M7 17h2M12 17h2M17 17h2"/></>,
   batch: <><path d="M7 3h10v4H7z"/><path d="M6 7h12v14H6z"/><path d="M9 11h6M9 15h6"/></>,

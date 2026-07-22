@@ -165,7 +165,7 @@ export function createRelease(state: BrandState, draft: ReleaseDraft, batch: Bat
   };
 }
 
-export function launchCampaign(state: BrandState, releaseId: string, type: CampaignType, regionId: string, day: number): { state: BrandState; campaign: PromotionCampaign; cost: number } {
+export function launchCampaign(state: BrandState, releaseId: string, type: CampaignType, regionId: string, day: number, teamBonus = 0): { state: BrandState; campaign: PromotionCampaign; cost: number } {
   const release = state.releases.find((item) => item.id === releaseId && item.status === 'active');
   if (!release) throw new Error('Активный релиз не найден');
   if (state.campaigns.some((campaign) => campaign.releaseId === releaseId && campaign.status === 'active')) throw new Error('Для релиза уже идёт рекламная кампания');
@@ -178,7 +178,7 @@ export function launchCampaign(state: BrandState, releaseId: string, type: Campa
     startedDay: day,
     endDay: day + definition.days,
     cost: definition.cost,
-    awarenessGain: definition.gain,
+    awarenessGain: clamp(definition.gain + Math.round(teamBonus), definition.gain, definition.gain + 8),
     status: 'active',
     report: `${definition.name} запущена. Результат появится на ${day + definition.days}-й день.`,
   };

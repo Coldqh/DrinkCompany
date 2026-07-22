@@ -5,6 +5,9 @@ import {
   acceptMarketOffer,
   createSupplierAgreement,
   cleanProductionFacility,
+  assignTeamEmployee,
+  fireTeamEmployee,
+  hireTeamCandidate,
   expandFacilityRoom,
   expandFacilityUtility,
   advanceDay,
@@ -21,6 +24,9 @@ import {
   registerBrand,
   registerProductRelease,
   startPromotionCampaign,
+  trainTeamEmployee,
+  updateTeamAutomation,
+  updateTeamWorkload,
   serviceProductionEquipment,
   saveRecipe,
   startCompany,
@@ -36,6 +42,7 @@ import type { FacilityRoomId, FacilityUtilityId } from '../domain/facility';
 import type { IngredientCategory } from '../data/supplyCatalog';
 import type { ProposalInput } from '../domain/market';
 import type { BrandDraft, CampaignType, ReleaseDraft } from '../domain/brand';
+import type { ShiftId, TeamAutomation, TeamDepartment, TrainingTrack, Workload } from '../domain/team';
 import { loadGameState, parseGameState, saveGameState, serializeGameState } from '../infrastructure/gameStateRepository';
 
 export interface ActionResult {
@@ -75,6 +82,12 @@ export interface GameController {
   createBrand: (draft: BrandDraft) => ActionResult;
   createRelease: (draft: ReleaseDraft) => ActionResult;
   launchCampaign: (releaseId: string, type: CampaignType) => ActionResult;
+  hireEmployee: (candidateId: string) => ActionResult;
+  fireEmployee: (employeeId: string) => ActionResult;
+  assignEmployee: (employeeId: string, department: TeamDepartment | null, shift: ShiftId) => ActionResult;
+  setWorkload: (department: TeamDepartment, workload: Workload) => ActionResult;
+  setAutomation: (key: keyof TeamAutomation, enabled: boolean) => ActionResult;
+  trainEmployee: (employeeId: string, track: TrainingTrack) => ActionResult;
 }
 
 export function useGameState(): GameController {
@@ -233,6 +246,30 @@ export function useGameState(): GameController {
     perform((current) => startPromotionCampaign(current, releaseId, type), 'Продвижение запущено')
   ), [perform]);
 
+  const hireEmployee = useCallback((candidateId: string) => (
+    perform((current) => hireTeamCandidate(current, candidateId), 'Сотрудник принят в команду')
+  ), [perform]);
+
+  const fireEmployee = useCallback((employeeId: string) => (
+    perform((current) => fireTeamEmployee(current, employeeId), 'Сотрудник уволен')
+  ), [perform]);
+
+  const assignEmployeeAction = useCallback((employeeId: string, department: TeamDepartment | null, shift: ShiftId) => (
+    perform((current) => assignTeamEmployee(current, employeeId, department, shift), 'Назначение обновлено')
+  ), [perform]);
+
+  const setWorkloadAction = useCallback((department: TeamDepartment, workload: Workload) => (
+    perform((current) => updateTeamWorkload(current, department, workload), 'Нагрузка отдела изменена')
+  ), [perform]);
+
+  const setAutomationAction = useCallback((key: keyof TeamAutomation, enabled: boolean) => (
+    perform((current) => updateTeamAutomation(current, key, enabled), enabled ? 'Автоматизация включена' : 'Автоматизация отключена')
+  ), [perform]);
+
+  const trainEmployeeAction = useCallback((employeeId: string, track: TrainingTrack) => (
+    perform((current) => trainTeamEmployee(current, employeeId, track), 'Обучение запущено')
+  ), [perform]);
+
   const reset = useCallback(() => replaceState(createInitialState()), [replaceState]);
 
   const exportSave = useCallback(() => {
@@ -283,5 +320,11 @@ export function useGameState(): GameController {
     createBrand: createBrandAction,
     createRelease: createReleaseAction,
     launchCampaign: launchCampaignAction,
+    hireEmployee,
+    fireEmployee,
+    assignEmployee: assignEmployeeAction,
+    setWorkload: setWorkloadAction,
+    setAutomation: setAutomationAction,
+    trainEmployee: trainEmployeeAction,
   };
 }

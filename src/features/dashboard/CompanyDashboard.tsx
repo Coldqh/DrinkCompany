@@ -11,6 +11,7 @@ interface CompanyDashboardProps {
   onOpenProduction: () => void;
   onOpenBatches: () => void;
   onOpenMarket: () => void;
+  onOpenTeam: () => void;
   onDismissTutorial: () => void;
 }
 
@@ -28,7 +29,7 @@ const tutorialSteps = [
   { id: 'first-sale', title: 'Закрыть поставку', text: 'Принять оффер и получить первую выручку.' },
 ];
 
-export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onOpenMarket, onDismissTutorial }: CompanyDashboardProps) {
+export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onOpenMarket, onOpenTeam, onDismissTutorial }: CompanyDashboardProps) {
   const [section, setSection] = useState<DashboardSection>('today');
   const [detail, setDetail] = useState<DetailModal>(null);
   const property = properties.find((item) => item.id === state.world?.propertyId);
@@ -104,6 +105,11 @@ export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onOpe
             <span><strong>Рыночная сеть</strong><small>{state.world?.outlets.length ?? 0} точек · {activeOffers} офферов</small></span>
             <Icon name="arrow" />
           </button>
+          <button className="compact-list-row" onClick={onOpenTeam}>
+            <span className="row-icon"><Icon name="team" /></span>
+            <span><strong>Команда</strong><small>{state.team.employees.length} сотрудников · {state.team.candidates.length} кандидатов</small></span>
+            <Icon name="arrow" />
+          </button>
           {latestPulse && (
             <div className="compact-signal">
               <span>День {latestPulse.day}</span>
@@ -140,6 +146,7 @@ export function CompanyDashboard({ state, onOpenProduction, onOpenBatches, onOpe
             <Detail label="Производство" value={formatMoney(state.finance.productionSpend)} />
             <Detail label="Расширение" value={formatMoney(state.finance.facilitySpend)} />
             <Detail label="Обслуживание" value={formatMoney(state.finance.maintenanceSpend)} />
+            <Detail label="Команда" value={formatMoney(state.finance.teamSpend)} />
             <Detail label="Выручка" value={formatMoney(state.finance.salesRevenue)} />
             <Detail label="Товарный запас" value={formatMoney(state.finance.packagedInventoryValue)} />
           </div>
