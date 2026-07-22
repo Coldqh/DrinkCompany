@@ -23,6 +23,7 @@ export function TodayView({ state, onOpen }: TodayViewProps) {
   const decisions = buildDecisions(state);
   const activeBatches = state.production.batches.filter((batch) => !['packaged', 'discarded'].includes(batch.status));
   const shipments = state.supply.purchaseOrders.filter((order) => ['pending', 'delayed'].includes(order.status));
+  const freight = state.ecosystem?.trade.shipments.filter((shipment) => ['awaiting_transport', 'in_transit', 'delayed', 'customs_hold'].includes(shipment.status)) ?? [];
   const cashDays = state.finance.dailyFixedCost > 0 ? Math.floor(state.finance.cash / state.finance.dailyFixedCost) : 99;
 
   return (
@@ -51,7 +52,7 @@ export function TodayView({ state, onOpen }: TodayViewProps) {
       </section>
 
       <section className="working-section">
-        <div className="section-heading"><span>В работе</span><b>{activeBatches.length + shipments.length}</b></div>
+        <div className="section-heading"><span>В работе</span><b>{activeBatches.length + shipments.length + freight.length}</b></div>
         <div className="work-list plain-panel">
           {activeBatches.slice(0, 3).map((batch) => (
             <button key={batch.id} onClick={() => onOpen('production')}>
@@ -65,7 +66,13 @@ export function TodayView({ state, onOpen }: TodayViewProps) {
               <b>{Math.max(0, order.expectedDay - state.day)} дн.</b>
             </button>
           ))}
-          {activeBatches.length + shipments.length === 0 && <p className="quiet-copy">Нет активных партий и поставок.</p>}
+          {freight.slice(0, 2).map((shipment) => (
+            <button key={shipment.id} onClick={() => onOpen('world')}>
+              <span><strong>{shipment.status === 'customs_hold' ? 'Груз на таможне' : shipment.status === 'awaiting_transport' ? 'Груз ждёт перевозчика' : shipment.status === 'delayed' ? 'Перевозка задержана' : 'Товар в пути'}</strong><small>{shipment.quantity} ед. · {shipment.note}</small></span>
+              <b>{shipment.arrivalDay > state.day ? `${shipment.arrivalDay - state.day} дн.` : 'сегодня'}</b>
+            </button>
+          ))}
+          {activeBatches.length + shipments.length + freight.length === 0 && <p className="quiet-copy">Нет активных партий и поставок.</p>}
         </div>
       </section>
 
@@ -90,8 +97,11 @@ function buildDecisions(state: GameState): DecisionItem[] {
   const compliance = state.ecosystem?.regulation.compliance.find((item) => item.organizationId === playerOrganizationId);
   const regulatoryViolations = state.ecosystem?.regulation.violations.filter((item) => item.organizationId === playerOrganizationId && !item.resolved) ?? [];
   const overdueExcise = state.ecosystem?.regulation.obligations.filter((item) => item.organizationId === playerOrganizationId && item.status === 'overdue') ?? [];
+  const freightHolds = state.ecosystem?.trade.shipments.filter((shipment) => shipment.status === 'customs_hold' || shipment.status === 'delayed') ?? [];
+  const freightQueue = state.ecosystem?.logistics.jobs.filter((job) => job.status === 'queued' && state.day - job.createdDay >= 2) ?? [];
 
   if (regulatoryViolations.length > 0 || overdueExcise.length > 0) items.push({ id: 'regulation', title: 'Регулятор требует внимания', detail: `${regulatoryViolations.length} нарушений · просрочено ${overdueExcise.length} обязательств · комплаенс ${compliance?.score ?? 100}/100.`, target: 'company', icon: 'warning', urgent: true });
+  if (freightHolds.length > 0 || freightQueue.length > 0) items.push({ id: 'freight', title: 'Логистика требует внимания', detail: `${freightHolds.length} задержано · ${freightQueue.length} долго ждут транспорт.`, target: 'world', icon: 'warning', urgent: freightHolds.length > 0 });
   if (offers.length > 0) items.push({ id: 'offers', title: `${offers.length} коммерческих оффера`, detail: 'Принять условия или отказаться.', target: 'trade', icon: 'contract', urgent: true });
   if (orders.length > 0) {
     const nearest = Math.min(...orders.map((order) => order.dueDay));

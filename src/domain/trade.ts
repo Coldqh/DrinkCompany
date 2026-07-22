@@ -5,7 +5,7 @@ import { calculateShelfDemand, recordConsumerPurchase, type DemandState } from '
 
 export type TradeCommodityKind = 'ingredient' | 'product';
 export type TradeProductFamily = 'beer' | 'cider' | 'wine' | 'spirit' | 'liqueur' | 'alcohol_free';
-export type TradeShipmentStatus = 'in_transit' | 'delivered' | 'delayed' | 'failed';
+export type TradeShipmentStatus = 'awaiting_transport' | 'in_transit' | 'customs_hold' | 'delivered' | 'delayed' | 'failed';
 export type TradeContractStatus = 'active' | 'paused' | 'broken';
 export type TradeBatchStatus = 'producing' | 'ready' | 'blocked';
 export type TradeProductStatus = 'active' | 'paused' | 'discontinued';
@@ -64,6 +64,7 @@ export interface TradeContractState {
   id: string;
   sellerOrganizationId: string;
   buyerOrganizationId: string;
+  sellerAssetId?: string | null;
   buyerAssetId: string | null;
   commodityKind: TradeCommodityKind;
   commodityId: string;
@@ -81,6 +82,7 @@ export interface TradeShipmentState {
   contractId: string;
   sellerOrganizationId: string;
   buyerOrganizationId: string;
+  sellerAssetId?: string | null;
   buyerAssetId: string | null;
   commodityKind: TradeCommodityKind;
   commodityId: string;
@@ -210,6 +212,7 @@ export function createTradeState(organizations: OrganizationState[], assets: Wor
         id: `trade-contract-${nextContractNumber++}`,
         sellerOrganizationId: seller.id,
         buyerOrganizationId: producer.id,
+        sellerAssetId: firstOperatingAssetId(assets, seller.id),
         buyerAssetId: null,
         commodityKind: 'ingredient',
         commodityId: ingredientId,
@@ -224,12 +227,61 @@ export function createTradeState(organizations: OrganizationState[], assets: Wor
     }
   }
 
+  const distributorOrganizations = organizations.filter((organization) => organization.kind === 'distributor');
+  for (const [index, distributor] of distributorOrganizations.entries()) {
+    const warehouse = assets.find((asset) => asset.operatorOrganizationId === distributor.id && asset.type === 'distribution_center');
+    const selectedProducts = products
+      .slice()
+      .sort((a, b) => {
+        const aProducer = organizations.find((item) => item.id === a.producerOrganizationId);
+        const bProducer = organizations.find((item) => item.id === b.producerOrganizationId);
+        return Number(bProducer?.countryId === distributor.countryId) - Number(aProducer?.countryId === distributor.countryId);
+      })
+      .slice(0, Math.min(3, products.length));
+    for (const [productIndex, product] of selectedProducts.entries()) {
+      const initialUnits = 84 + ((index + productIndex) % 3) * 36;
+      inventory.push({
+        id: `trade-lot-${nextInventoryNumber++}`,
+        organizationId: distributor.id,
+        commodityKind: 'product',
+        commodityId: product.id,
+        quantity: initialUnits,
+        unit: 'bottle',
+        quality: product.quality,
+        unitCost: roundMoney(product.wholesalePrice * .96),
+        originOrganizationId: product.producerOrganizationId,
+        receivedDay: day,
+        expiresDay: day + 210,
+      });
+      contracts.push({
+        id: `trade-contract-${nextContractNumber++}`,
+        sellerOrganizationId: product.producerOrganizationId,
+        buyerOrganizationId: distributor.id,
+        sellerAssetId: firstOperatingAssetId(assets, product.producerOrganizationId),
+        buyerAssetId: warehouse?.id ?? null,
+        commodityKind: 'product',
+        commodityId: product.id,
+        quantity: 120 + productIndex * 36,
+        unitPrice: product.wholesalePrice,
+        intervalDays: 5 + productIndex,
+        nextDeliveryDay: day + 2 + index,
+        status: 'active',
+        failures: 0,
+        lastResult: 'Региональный склад снабжается',
+      });
+    }
+  }
+
   const retailAssets = assets.filter((asset) => (asset.type === 'bar' || asset.type === 'shop') && asset.marketOutletId && asset.operatorOrganizationId);
   for (const [index, asset] of retailAssets.entries()) {
     const buyer = organizations.find((organization) => organization.id === asset.operatorOrganizationId);
     if (!buyer) continue;
     const preferredSellerIds = buyer.supplierOrganizationIds;
-    const product = products.find((item) => preferredSellerIds.includes(item.producerOrganizationId))
+    const distributor = distributorOrganizations.find((item) => item.countryId === buyer.countryId) ?? distributorOrganizations[index % Math.max(1, distributorOrganizations.length)];
+    const distributorProductIds = distributor ? inventory.filter((lot) => lot.organizationId === distributor.id && lot.commodityKind === 'product').map((lot) => lot.commodityId) : [];
+    const product = products.find((item) => distributorProductIds.includes(item.id) && preferredSellerIds.includes(item.producerOrganizationId))
+      ?? products.find((item) => distributorProductIds.includes(item.id))
+      ?? products.find((item) => preferredSellerIds.includes(item.producerOrganizationId))
       ?? products[(index * 3) % Math.max(1, products.length)];
     if (!product) continue;
     const initialUnits = 18 + (index % 4) * 12;
@@ -237,7 +289,7 @@ export function createTradeState(organizations: OrganizationState[], assets: Wor
       id: `trade-shelf-${nextShelfNumber++}`,
       assetId: asset.id,
       productId: product.id,
-      supplierOrganizationId: product.producerOrganizationId,
+      supplierOrganizationId: distributor?.id ?? product.producerOrganizationId,
       units: initialUnits,
       retailPrice: roundMoney(product.recommendedRetailPrice * (asset.type === 'bar' ? 1.45 : 1)),
       unitsSoldToday: 0,
@@ -248,8 +300,9 @@ export function createTradeState(organizations: OrganizationState[], assets: Wor
     });
     contracts.push({
       id: `trade-contract-${nextContractNumber++}`,
-      sellerOrganizationId: product.producerOrganizationId,
+      sellerOrganizationId: distributor?.id ?? product.producerOrganizationId,
       buyerOrganizationId: buyer.id,
+      sellerAssetId: distributor ? firstOperatingAssetId(assets, distributor.id) : firstOperatingAssetId(assets, product.producerOrganizationId),
       buyerAssetId: asset.id,
       commodityKind: 'product',
       commodityId: product.id,
@@ -347,25 +400,30 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
       });
     } else if (shipment.buyerAssetId) {
       const product = trade.products.find((item) => item.id === shipment.commodityId);
-      const existing = trade.shelves.find((item) => item.assetId === shipment.buyerAssetId && item.productId === shipment.commodityId);
-      if (existing) {
-        existing.units += shipment.quantity;
-        existing.lastRestockDay = day;
-        existing.stockoutDays = 0;
-      } else if (product) {
-        trade.shelves.push({
-          id: `trade-shelf-${trade.nextShelfNumber++}`,
-          assetId: shipment.buyerAssetId,
-          productId: product.id,
-          supplierOrganizationId: product.producerOrganizationId,
-          units: shipment.quantity,
-          retailPrice: product.recommendedRetailPrice,
-          unitsSoldToday: 0,
-          revenueToday: 0,
-          totalUnitsSold: 0,
-          lastRestockDay: day,
-          stockoutDays: 0,
-        });
+      const buyerAsset = assets.find((item) => item.id === shipment.buyerAssetId);
+      if (buyerAsset && (buyerAsset.type === 'bar' || buyerAsset.type === 'shop')) {
+        const existing = trade.shelves.find((item) => item.assetId === shipment.buyerAssetId && item.productId === shipment.commodityId);
+        if (existing) {
+          existing.units += shipment.quantity;
+          existing.lastRestockDay = day;
+          existing.stockoutDays = 0;
+        } else if (product) {
+          trade.shelves.push({
+            id: `trade-shelf-${trade.nextShelfNumber++}`,
+            assetId: shipment.buyerAssetId,
+            productId: product.id,
+            supplierOrganizationId: shipment.sellerOrganizationId,
+            units: shipment.quantity,
+            retailPrice: product.recommendedRetailPrice,
+            unitsSoldToday: 0,
+            revenueToday: 0,
+            totalUnitsSold: 0,
+            lastRestockDay: day,
+            stockoutDays: 0,
+          });
+        }
+      } else {
+        addInventory(trade, shipment.buyerOrganizationId, 'product', shipment.commodityId, shipment.quantity, shipment.unitPrice, shipment.sellerOrganizationId, day);
       }
     } else {
       addInventory(trade, shipment.buyerOrganizationId, 'product', shipment.commodityId, shipment.quantity, shipment.unitPrice, shipment.sellerOrganizationId, day);
@@ -514,6 +572,8 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
   // 6. Формирование отправок по контрактам.
   trade.contracts = trade.contracts.map((contract) => {
     if (contract.status !== 'active' || contract.nextDeliveryDay > day) return contract;
+    const activeForContract = trade.shipments.some((shipment) => shipment.contractId === contract.id && !['delivered', 'failed'].includes(shipment.status));
+    if (activeForContract) return { ...contract, nextDeliveryDay: day + 1, lastResult: 'Предыдущая поставка ещё не завершена' };
     const available = inventoryQuantity(trade, contract.sellerOrganizationId, contract.commodityKind, contract.commodityId);
     if (available < contract.quantity) {
       const failures = contract.failures + 1;
@@ -522,25 +582,24 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
       return { ...contract, failures, nextDeliveryDay: day + 1, lastResult: 'Дефицит у поставщика' };
     }
     consumeInventory(trade, contract.sellerOrganizationId, contract.commodityKind, contract.commodityId, contract.quantity);
-    const transit = 1 + hash(`${contract.id}-${day}`) % 3;
-    const delayed = hash(`delay-${contract.id}-${day}`) % 17 === 0;
     trade.shipments.push({
       id: `trade-shipment-${trade.nextShipmentNumber++}`,
       contractId: contract.id,
       sellerOrganizationId: contract.sellerOrganizationId,
       buyerOrganizationId: contract.buyerOrganizationId,
-      buyerAssetId: contract.buyerAssetId,
+      sellerAssetId: contract.sellerAssetId ?? firstOperatingAssetId(assets, contract.sellerOrganizationId),
+      buyerAssetId: contract.buyerAssetId ?? firstOperatingAssetId(assets, contract.buyerOrganizationId),
       commodityKind: contract.commodityKind,
       commodityId: contract.commodityId,
       quantity: contract.quantity,
       unitPrice: contract.unitPrice,
-      departDay: day,
-      arrivalDay: day + transit + (delayed ? 1 : 0),
-      status: delayed ? 'delayed' : 'in_transit',
-      note: delayed ? 'Логистика задержала отправку' : 'В пути',
+      departDay: 0,
+      arrivalDay: day,
+      status: 'awaiting_transport',
+      note: 'Ожидает назначения перевозчика',
     });
     record('purchase', contract.sellerOrganizationId, contract.buyerOrganizationId, contract.buyerAssetId, `Отправлен товар`, `${commodityName(trade, contract.commodityKind, contract.commodityId)} · ${contract.quantity} ед.`, contract.quantity * contract.unitPrice);
-    return { ...contract, failures: 0, nextDeliveryDay: day + contract.intervalDays, lastResult: delayed ? 'Отправлено с задержкой' : 'Отправлено' };
+    return { ...contract, failures: 0, nextDeliveryDay: day + contract.intervalDays, lastResult: 'Передано в логистическую очередь' };
   });
 
   // 7. Жизненный цикл продуктовых линеек.
@@ -591,7 +650,9 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
   trade.operations = operations;
   trade.nextOperationNumber = nextOperationNumber;
   trade.inventory = trade.inventory.filter((lot) => lot.quantity > .001 && (lot.expiresDay === null || lot.expiresDay >= day));
-  trade.shipments = trade.shipments.slice(-180);
+  const activeShipments = trade.shipments.filter((shipment) => !['delivered', 'failed'].includes(shipment.status));
+  const completedShipments = trade.shipments.filter((shipment) => ['delivered', 'failed'].includes(shipment.status)).slice(-240);
+  trade.shipments = [...completedShipments, ...activeShipments];
   trade.batches = trade.batches.slice(-120);
   return { trade, demand: nextDemand, organizations: nextOrganizations, events };
 }
@@ -606,8 +667,8 @@ export function normalizeTradeState(value: TradeState | null | undefined): Trade
     inventory: value.inventory ?? [],
     products: (value.products ?? []).map((product) => { const categoryId = product.beverageCategoryId ?? legacyCategoryForFamily(product.family); return ({ ...product, beverageCategoryId: categoryId, alcoholByVolume: Number.isFinite(product.alcoholByVolume) ? product.alcoholByVolume : defaultAbvForCategory(categoryId), packageVolumeLiters: Number.isFinite(product.packageVolumeLiters) ? product.packageVolumeLiters : defaultPackageVolumeForCategory(categoryId) }); }),
     batches: value.batches ?? [],
-    contracts: value.contracts ?? [],
-    shipments: value.shipments ?? [],
+    contracts: (value.contracts ?? []).map((contract) => ({ ...contract, sellerAssetId: contract.sellerAssetId ?? null })),
+    shipments: (value.shipments ?? []).map((shipment) => ({ ...shipment, sellerAssetId: shipment.sellerAssetId ?? null })),
     shelves: value.shelves ?? [],
     operations: value.operations ?? [],
     nextInventoryNumber: value.nextInventoryNumber ?? 1,
@@ -631,6 +692,18 @@ export function commodityName(state: Pick<TradeState, 'products'>, kind: TradeCo
 
 export function inventoryQuantity(state: Pick<TradeState, 'inventory'>, organizationId: string, kind: TradeCommodityKind, commodityId: string): number {
   return roundQuantity(state.inventory.filter((lot) => lot.organizationId === organizationId && lot.commodityKind === kind && lot.commodityId === commodityId).reduce((sum, lot) => sum + lot.quantity, 0));
+}
+
+export function restoreShipmentInventory(state: TradeState, shipment: TradeShipmentState, day: number): TradeState {
+  const next = { ...state, inventory: state.inventory.map((lot) => ({ ...lot })) };
+  addInventory(next, shipment.sellerOrganizationId, shipment.commodityKind, shipment.commodityId, shipment.quantity, shipment.unitPrice, shipment.sellerOrganizationId, day);
+  return next;
+}
+
+function firstOperatingAssetId(assets: WorldAssetState[], organizationId: string): string | null {
+  return assets.find((asset) => asset.operatorOrganizationId === organizationId && asset.status === 'operating')?.id
+    ?? assets.find((asset) => asset.ownerOrganizationId === organizationId)?.id
+    ?? null;
 }
 
 function createSeedProduct(producer: OrganizationState, family: TradeProductFamily, day: number, number: number): TradeProductState {

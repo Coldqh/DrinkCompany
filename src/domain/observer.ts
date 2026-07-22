@@ -23,6 +23,13 @@ export interface ObserverSimulationReport {
   primaryRawLotCount: number;
   harvestCount: number;
   primaryProcessingOperations: number;
+  carrierCount: number;
+  distributorCount: number;
+  fleetVehicleCount: number;
+  freightJobCount: number;
+  deliveredFreightJobs: number;
+  queuedFreightJobs: number;
+  logisticsOperations: number;
   finalPlayerCash: number;
   violations: string[];
 }
@@ -85,6 +92,13 @@ export function runObserverSimulation(initial: GameState, days: number, options:
         primaryRawLotCount: 0,
         harvestCount: 0,
         primaryProcessingOperations: 0,
+        carrierCount: 0,
+        distributorCount: 0,
+        fleetVehicleCount: 0,
+        freightJobCount: 0,
+        deliveredFreightJobs: 0,
+        queuedFreightJobs: 0,
+        logisticsOperations: 0,
         finalPlayerCash: state.finance.cash,
         violations: state.phase === 'operating' ? ['Operating state has no ecosystem'] : [],
       },
@@ -106,6 +120,13 @@ export function runObserverSimulation(initial: GameState, days: number, options:
   if (primarySiteIds.size !== ecosystem.primaryProduction.sites.length) violations.push('Дублирующиеся первичные хозяйства');
   if (ecosystem.primaryProduction.rawLots.some((lot) => !primarySiteIds.has(lot.siteId))) violations.push('Первичный лот ссылается на неизвестное хозяйство');
   if (ecosystem.primaryProduction.harvests.some((harvest) => harvest.quantity <= 0 || harvest.quality < 0 || harvest.quality > 100)) violations.push('Некорректная запись урожая');
+  const vehicleIds = new Set(ecosystem.logistics.fleet.map((vehicle) => vehicle.id));
+  if (vehicleIds.size !== ecosystem.logistics.fleet.length) violations.push('Дублирующиеся транспортные средства');
+  const shipmentIds = new Set(ecosystem.trade.shipments.map((shipment) => shipment.id));
+  if (ecosystem.logistics.jobs.some((job) => !['delivered', 'failed'].includes(job.status) && !shipmentIds.has(job.shipmentId))) violations.push('Активная логистическая задача ссылается на неизвестную поставку');
+  if (ecosystem.logistics.jobs.some((job) => job.transportCost < 0 || job.insuranceCost < 0 || job.damageUnits < 0)) violations.push('Некорректные показатели перевозки');
+  if (ecosystem.logistics.fleet.some((vehicle) => vehicle.capacity <= 0 || vehicle.condition < 0 || vehicle.condition > 100)) violations.push('Некорректное состояние автопарка');
+  if (ecosystem.logistics.jobs.some((job) => job.status === 'delivered' && job.deliveredDay === null)) violations.push('Доставленный рейс без даты завершения');
   const licenseIds = new Set(ecosystem.regulation.licenses.map((license) => license.id));
   if (licenseIds.size !== ecosystem.regulation.licenses.length) violations.push('Дублирующиеся регуляторные лицензии');
   return {
@@ -132,6 +153,13 @@ export function runObserverSimulation(initial: GameState, days: number, options:
       primaryRawLotCount: ecosystem.primaryProduction.rawLots.length,
       harvestCount: ecosystem.primaryProduction.harvests.length,
       primaryProcessingOperations: ecosystem.primaryProduction.operations.filter((operation) => operation.kind === 'processing').length,
+      carrierCount: ecosystem.organizations.filter((organization) => organization.kind === 'carrier').length,
+      distributorCount: ecosystem.organizations.filter((organization) => organization.kind === 'distributor').length,
+      fleetVehicleCount: ecosystem.logistics.fleet.length,
+      freightJobCount: Math.max(ecosystem.logistics.jobs.length, ecosystem.logistics.nextJobNumber - 1),
+      deliveredFreightJobs: ecosystem.logistics.carriers.reduce((sum, carrier) => sum + carrier.deliveredJobs, 0),
+      queuedFreightJobs: ecosystem.logistics.jobs.filter((job) => job.status === 'queued').length,
+      logisticsOperations: ecosystem.logistics.operations.length,
       finalPlayerCash: state.finance.cash,
       violations,
     },

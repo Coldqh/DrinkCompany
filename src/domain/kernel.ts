@@ -1,6 +1,6 @@
 import { beverageBlueprints, type BeverageCategoryId } from '../data/beverageCatalog';
 
-export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment' | 'authority' | 'license' | 'inspection' | 'tax_obligation' | 'primary_site' | 'harvest';
+export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment' | 'authority' | 'license' | 'inspection' | 'tax_obligation' | 'primary_site' | 'harvest' | 'vehicle' | 'route' | 'freight_job';
 export type LedgerAccount = `org:${string}:cash` | `org:${string}:revenue` | `org:${string}:expense` | `system:${string}`;
 export type ScheduleCadence = 'daily' | 'weekly' | 'monthly' | 'seasonal' | 'annual' | 'once';
 
@@ -28,7 +28,7 @@ export interface KernelEntityRef {
   ownerOrganizationId: string | null;
   countryId: string | null;
   regionId: string | null;
-  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand' | 'regulation' | 'primary';
+  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand' | 'regulation' | 'primary' | 'logistics';
 }
 
 export interface KernelProductSpecification {
@@ -156,6 +156,13 @@ export interface KernelPrimarySnapshot {
   operations: Array<{ id: string; day: number; kind: string; organizationId: string; counterpartyOrganizationId: string | null; commodityId: string; quantity: number; amount: number; inputLotIds: string[]; outputLotIds: string[]; headline: string }>;
 }
 
+export interface KernelLogisticsSnapshot {
+  fleet: Array<{ id: string; carrierId: string; type: string; currentRegionId: string }>;
+  routes: Array<{ id: string; originRegionId: string; destinationRegionId: string }>;
+  jobs: Array<{ id: string; shipmentId: string; carrierId: string | null; routeId: string; status: string }>;
+  operations: Array<{ id: string; day: number; kind: string; carrierOrganizationId: string | null; organizationId: string | null; amount: number; headline: string }>;
+}
+
 export interface KernelCreateInput {
   day: number;
   seedText: string;
@@ -165,11 +172,12 @@ export interface KernelCreateInput {
   demand?: KernelDemandSnapshot;
   regulation?: KernelRegulationSnapshot;
   primaryProduction?: KernelPrimarySnapshot;
+  logistics?: KernelLogisticsSnapshot;
 }
 
 export function createEcosystemKernel(input: KernelCreateInput): EcosystemKernelState {
   const seed = hashSeed(input.seedText);
-  const entities = buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction);
+  const entities = buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction, input.logistics);
   const productSpecifications = input.trade.products.map((product) => createProductSpecification(product, input.day));
   const primaryTrace = (input.primaryProduction?.rawLots ?? []).map((lot, index) => ({
     id: `trace-${index + 1}`,
@@ -214,7 +222,7 @@ export function normalizeEcosystemKernel(kernel: EcosystemKernelState | undefine
   const traceability = mergeTraceability(kernel.traceability ?? [], input.trade.inventory, input.primaryProduction?.rawLots ?? [], input.day);
   const normalized: EcosystemKernelState = {
     ...kernel,
-    entities: buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction),
+    entities: buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction, input.logistics),
     productSpecifications: mergeProductSpecifications(kernel.productSpecifications ?? [], input.trade.products, input.day),
     moneyLedger: kernel.moneyLedger ?? [],
     goodsLedger: kernel.goodsLedger ?? [],
@@ -319,6 +327,27 @@ export function synchronizeKernelFromRegulation(kernel: EcosystemKernelState, re
       memo: `Уплата акциза ${payment.obligationId}`,
     });
     sources.add(payment.id);
+  }
+  return next;
+}
+
+export function synchronizeKernelFromLogistics(kernel: EcosystemKernelState, logistics: KernelLogisticsSnapshot): EcosystemKernelState {
+  let next = kernel;
+  const recorded = new Set(next.moneyLedger.map((entry) => entry.sourceId));
+  for (const operation of logistics.operations) {
+    if (operation.amount <= 0 || recorded.has(operation.id) || !operation.carrierOrganizationId || !operation.organizationId) continue;
+    const damageClaim = operation.kind === 'damage';
+    next = recordMoneyTransfer(next, {
+      day: operation.day,
+      debitAccount: `org:${damageClaim ? operation.carrierOrganizationId : operation.organizationId}:expense`,
+      creditAccount: `org:${damageClaim ? operation.organizationId : operation.carrierOrganizationId}:revenue`,
+      amount: operation.amount,
+      currency: 'EUR',
+      sourceType: damageClaim ? 'freight_claim' : 'freight_service',
+      sourceId: operation.id,
+      memo: operation.headline,
+    });
+    recorded.add(operation.id);
   }
   return next;
 }
@@ -479,7 +508,7 @@ export function nextRandom(state: number): { state: number; value: number } {
   return { state: next || 1, value: next / 0x1_0000_0000 };
 }
 
-function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: KernelAssetInput[], trade: KernelTradeSnapshot, demand?: KernelDemandSnapshot, regulation?: KernelRegulationSnapshot, primary?: KernelPrimarySnapshot): KernelEntityRef[] {
+function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: KernelAssetInput[], trade: KernelTradeSnapshot, demand?: KernelDemandSnapshot, regulation?: KernelRegulationSnapshot, primary?: KernelPrimarySnapshot, logistics?: KernelLogisticsSnapshot): KernelEntityRef[] {
   const entities: KernelEntityRef[] = [];
   for (const organization of organizations) entities.push({ id: organization.id, kind: 'organization', label: organization.name, ownerOrganizationId: organization.id, countryId: organization.countryId, regionId: organization.regionId, sourceModule: 'ecosystem' });
   for (const asset of assets) entities.push({ id: asset.id, kind: 'asset', label: asset.type, ownerOrganizationId: asset.ownerOrganizationId, countryId: asset.countryId, regionId: asset.regionId, sourceModule: 'ecosystem' });
@@ -497,6 +526,9 @@ function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: K
   for (const site of primary?.sites ?? []) entities.push({ id: `primary-site:${site.id}`, kind: 'primary_site', label: site.commodityId, ownerOrganizationId: site.organizationId, countryId: null, regionId: site.regionId, sourceModule: 'primary' });
   for (const lot of primary?.rawLots ?? []) entities.push({ id: lot.id, kind: 'lot', label: lot.commodityId, ownerOrganizationId: lot.organizationId, countryId: null, regionId: null, sourceModule: 'primary' });
   for (const harvest of primary?.harvests ?? []) entities.push({ id: harvest.id, kind: 'harvest', label: harvest.commodityId, ownerOrganizationId: harvest.organizationId, countryId: null, regionId: null, sourceModule: 'primary' });
+  for (const vehicle of logistics?.fleet ?? []) entities.push({ id: vehicle.id, kind: 'vehicle', label: vehicle.type, ownerOrganizationId: vehicle.carrierId, countryId: null, regionId: vehicle.currentRegionId, sourceModule: 'logistics' });
+  for (const route of logistics?.routes ?? []) entities.push({ id: route.id, kind: 'route', label: `${route.originRegionId} → ${route.destinationRegionId}`, ownerOrganizationId: null, countryId: null, regionId: route.originRegionId, sourceModule: 'logistics' });
+  for (const job of logistics?.jobs ?? []) entities.push({ id: job.id, kind: 'freight_job', label: job.status, ownerOrganizationId: job.carrierId, countryId: null, regionId: null, sourceModule: 'logistics' });
   return deduplicateEntities(entities);
 }
 

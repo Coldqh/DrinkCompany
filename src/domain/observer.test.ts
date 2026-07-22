@@ -28,6 +28,12 @@ describe('observer simulation', () => {
     expect(result.report.primarySiteCount).toBeGreaterThan(8);
     expect(result.report.harvestCount).toBeGreaterThan(0);
     expect(result.report.primaryProcessingOperations).toBeGreaterThan(0);
+    expect(result.report.carrierCount).toBe(4);
+    expect(result.report.distributorCount).toBe(3);
+    expect(result.report.fleetVehicleCount).toBeGreaterThanOrEqual(10);
+    expect(result.report.freightJobCount).toBeGreaterThan(0);
+    expect(result.report.deliveredFreightJobs).toBeGreaterThan(0);
+    expect(result.report.logisticsOperations).toBeGreaterThan(0);
     expect(result.report.violations).toEqual([]);
   });
 });
