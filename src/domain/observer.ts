@@ -60,6 +60,11 @@ export interface ObserverSimulationReport {
   hospitalityRevenue: number;
   openContainerCount: number;
   hospitalityIncidentCount: number;
+  hospitalityTrendCount: number;
+  hospitalityTrendHistoryCount: number;
+  hospitalityMenuRevisionCount: number;
+  closedHospitalityVenueCount: number;
+  hospitalityMarketKnowledgeCount: number;
   finalPlayerCash: number;
   violations: string[];
 }
@@ -155,6 +160,11 @@ export function runObserverSimulation(initial: GameState, days: number, options:
         hospitalityRevenue: 0,
         openContainerCount: 0,
         hospitalityIncidentCount: 0,
+        hospitalityTrendCount: 0,
+        hospitalityTrendHistoryCount: 0,
+        hospitalityMenuRevisionCount: 0,
+        closedHospitalityVenueCount: 0,
+        hospitalityMarketKnowledgeCount: 0,
         finalPlayerCash: state.finance.cash,
         violations: state.phase === 'operating' ? ['Operating state has no ecosystem'] : [],
       },
@@ -199,6 +209,11 @@ export function runObserverSimulation(initial: GameState, days: number, options:
   if (ecosystem.hospitality.pantryLots.some((lot) => { const definition = pantryDefinition(lot.ingredientTag); return !definition || definition.unit !== lot.unit; })) violations.push('Кладовая ссылается на неизвестный ингредиент или единицу измерения');
   if (ecosystem.hospitality.menuItems.some((item) => item.ingredients.some((ingredient) => ingredient.productId && !ecosystem.trade.products.some((product) => product.id === ingredient.productId)))) violations.push('Позиция меню ссылается на неизвестный продукт');
   if (ecosystem.hospitality.shiftReports.some((report) => report.guests < 0 || report.orders < 0 || report.revenue < 0 || report.costOfGoods < 0)) violations.push('Некорректный отчёт смены заведения');
+  if (ecosystem.hospitality.tasteProfiles.some((profile) => Object.values(profile.dimensions).some((value) => !Number.isFinite(value) || value < 0 || value > 1.5))) violations.push('Некорректный региональный вкусовой профиль');
+  if (ecosystem.hospitality.cocktailTrends.some((trend) => !Number.isFinite(trend.popularity) || !Number.isFinite(trend.momentum) || !Number.isFinite(trend.saturation) || trend.popularity < 0 || trend.saturation < 0)) violations.push('Некорректное состояние коктейльного тренда');
+  if (ecosystem.hospitality.trendHistory.some((snapshot) => !ecosystem.hospitality.cocktailTrends.some((trend) => trend.regionId === snapshot.regionId && trend.recipeId === snapshot.recipeId))) violations.push('История тренда ссылается на неизвестный региональный тренд');
+  if (ecosystem.hospitality.venues.some((venue) => venue.status === 'closed' && venue.closedDay === null)) violations.push('Закрытое заведение не хранит день закрытия');
+  if (ecosystem.hospitality.venues.some((venue) => venue.menuRevisionCount < 0 || venue.lossStreak < 0)) violations.push('Некорректная история управления заведением');
   return {
     state,
     report: {
@@ -256,6 +271,11 @@ export function runObserverSimulation(initial: GameState, days: number, options:
       hospitalityRevenue: ecosystem.hospitality.venues.reduce((sum, venue) => sum + venue.totalRevenue, 0),
       openContainerCount: ecosystem.hospitality.openContainers.length,
       hospitalityIncidentCount: ecosystem.hospitality.incidents.length,
+      hospitalityTrendCount: ecosystem.hospitality.cocktailTrends.length,
+      hospitalityTrendHistoryCount: ecosystem.hospitality.trendHistory.length,
+      hospitalityMenuRevisionCount: ecosystem.hospitality.venues.reduce((sum, venue) => sum + venue.menuRevisionCount, 0),
+      closedHospitalityVenueCount: ecosystem.hospitality.venues.filter((venue) => venue.status === 'closed').length,
+      hospitalityMarketKnowledgeCount: ecosystem.kernel.knowledge.filter((fact) => fact.factKey.startsWith('hospitality.cocktail_trend:')).length,
       finalPlayerCash: state.finance.cash,
       violations,
     },

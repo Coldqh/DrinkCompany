@@ -1,4 +1,5 @@
 import type { BeverageCategoryId } from '../data/beverageCatalog';
+import type { ConsumerSegmentTemplateId } from '../data/demandCatalog';
 import {
   cocktailPantryCatalog,
   cocktailRecipe,
@@ -19,6 +20,18 @@ import {
   type HospitalityVenueConcept,
 } from '../data/hospitalityCatalog';
 import type { OrganizationState, WorldAssetState } from './ecosystem';
+import {
+  advanceHospitalityMarketDay,
+  audienceCompetitionMultiplier,
+  cocktailMarketMetrics,
+  createHospitalityMarketState,
+  normalizeHospitalityMarketState,
+  recipeRegionalScore,
+  targetSegmentForConcept,
+  type HospitalityCocktailTrendState,
+  type HospitalityRegionTasteState,
+  type HospitalityTrendSnapshotState,
+} from './hospitalityMarket';
 import { calculateShelfDemand, recordConsumerPurchase, type DemandState } from './demand';
 import type {
   TradeLotAllocation,
@@ -62,8 +75,16 @@ export interface HospitalityMenuItemState {
   ingredients: HospitalityMenuIngredientState[];
   materialCost: number;
   salePrice: number;
+  listed: boolean;
   active: boolean;
   availabilityReason: string | null;
+  marketScore: number;
+  trendScore: number;
+  competitionPressure: number;
+  recentOrders: number;
+  recentRevenue: number;
+  lastSoldDay: number | null;
+  weakReviewCount: number;
   totalSold: number;
   totalRevenue: number;
   createdDay: number;
@@ -109,6 +130,13 @@ export interface HospitalityVenueState {
   cleanliness: number;
   serviceQuality: number;
   securityLevel: number;
+  targetSegmentId: ConsumerSegmentTemplateId;
+  marketingIntensity: number;
+  lastMenuReviewDay: number | null;
+  menuRevisionCount: number;
+  lossStreak: number;
+  lastShiftProfit: number;
+  closedDay: number | null;
   totalGuests: number;
   totalOrders: number;
   totalRevenue: number;
@@ -143,6 +171,9 @@ export interface HospitalityShiftReportState {
   serviceUtilization: number;
   averageServeQuality: number;
   satisfaction: number;
+  profit: number;
+  marketingSpend: number;
+  competitionMultiplier: number;
   incidentIds: string[];
   items: HospitalityShiftItemState[];
 }
@@ -159,13 +190,16 @@ export interface HospitalityIncidentState {
 }
 
 export interface HospitalityState {
-  hospitalityVersion: 2;
+  hospitalityVersion: 3;
   venues: HospitalityVenueState[];
   menuItems: HospitalityMenuItemState[];
   openContainers: HospitalityOpenContainerState[];
   pantryLots: HospitalityPantryLotState[];
   shiftReports: HospitalityShiftReportState[];
   incidents: HospitalityIncidentState[];
+  tasteProfiles: HospitalityRegionTasteState[];
+  cocktailTrends: HospitalityCocktailTrendState[];
+  trendHistory: HospitalityTrendSnapshotState[];
   nextMenuItemNumber: number;
   nextContainerNumber: number;
   nextPantryLotNumber: number;
@@ -262,26 +296,30 @@ export function createHospitalityFoundation(day: number): HospitalityFoundation 
   return { organizations, assets };
 }
 
-export function createHospitalityState(organizations: OrganizationState[], assets: WorldAssetState[], trade: TradeState, day: number): HospitalityState {
+export function createHospitalityState(organizations: OrganizationState[], assets: WorldAssetState[], trade: TradeState, demand: DemandState, day: number): HospitalityState {
   const venues = assets
     .filter((asset) => isHospitalityAssetType(asset.type) && asset.operatorOrganizationId)
     .map((asset, index) => createVenue(asset, organizations, day, index));
   const pantry = createInitialPantryLots(venues, day, 1);
+  const market = createHospitalityMarketState(demand, assets, venues, [], organizations, day);
   const state: HospitalityState = {
-    hospitalityVersion: 2,
+    hospitalityVersion: 3,
     venues,
     menuItems: [],
     openContainers: [],
     pantryLots: pantry.pantryLots,
     shiftReports: [],
     incidents: [],
+    tasteProfiles: market.tasteProfiles,
+    cocktailTrends: market.cocktailTrends,
+    trendHistory: market.trendHistory,
     nextMenuItemNumber: 1,
     nextContainerNumber: 1,
     nextPantryLotNumber: pantry.nextPantryLotNumber,
     nextShiftNumber: 1,
     nextIncidentNumber: 1,
   };
-  return ensureHospitalityMenus(state, trade, day);
+  return ensureHospitalityMenus(state, trade, assets, day);
 }
 
 export function ensureHospitalitySector(input: {
@@ -289,6 +327,7 @@ export function ensureHospitalitySector(input: {
   organizations: OrganizationState[];
   assets: WorldAssetState[];
   trade: TradeState;
+  demand: DemandState;
   day: number;
 }): { hospitality: HospitalityState; organizations: OrganizationState[]; assets: WorldAssetState[]; trade: TradeState } {
   const foundation = createHospitalityFoundation(input.day);
@@ -298,10 +337,10 @@ export function ensureHospitalitySector(input: {
   const assets = [...input.assets, ...foundation.assets.filter((item) => !assetIds.has(item.id))];
   const trade = ensureHospitalityTrade(input.trade, organizations, assets, input.day);
   const storedVersion = (input.state as { hospitalityVersion?: number } | undefined)?.hospitalityVersion;
-  const base = storedVersion === 1 || storedVersion === 2
-    ? normalizeHospitalityState(input.state as unknown as Partial<HospitalityState>, organizations, assets, trade, input.day)
-    : createHospitalityState(organizations, assets, trade, input.day);
-  return { hospitality: ensureHospitalityMenus(base, trade, input.day), organizations, assets, trade };
+  const base = storedVersion === 1 || storedVersion === 2 || storedVersion === 3
+    ? normalizeHospitalityState(input.state as unknown as Partial<HospitalityState>, organizations, assets, trade, input.demand, input.day)
+    : createHospitalityState(organizations, assets, trade, input.demand, input.day);
+  return { hospitality: ensureHospitalityMenus(base, trade, assets, input.day), organizations, assets, trade };
 }
 
 export function advanceHospitalityDay(
@@ -312,7 +351,24 @@ export function advanceHospitalityDay(
   assets: WorldAssetState[],
   day: number,
 ): HospitalityAdvanceResult {
-  let hospitality = ensureHospitalityMenus(state, tradeInput, day);
+  let hospitality = ensureHospitalityMenus(state, tradeInput, assets, day);
+  const marketAdvance = advanceHospitalityMarketDay({
+    market: hospitality,
+    demand: demandInput,
+    assets,
+    venues: hospitality.venues,
+    menuItems: hospitality.menuItems,
+    organizations: organizationsInput,
+    day,
+  });
+  hospitality = {
+    ...hospitality,
+    tasteProfiles: marketAdvance.tasteProfiles,
+    cocktailTrends: marketAdvance.cocktailTrends,
+    trendHistory: marketAdvance.trendHistory,
+  };
+  hospitality = reviewHospitalityMenus(hospitality, tradeInput, assets, organizationsInput, day);
+  hospitality = ensureHospitalityMenus(hospitality, tradeInput, assets, day);
   let trade: TradeState = {
     ...tradeInput,
     inventory: tradeInput.inventory.map((item) => ({ ...item })),
@@ -332,7 +388,7 @@ export function advanceHospitalityDay(
   let nextIncidentNumber = hospitality.nextIncidentNumber;
   let nextOperationNumber = trade.nextOperationNumber;
   const reports: HospitalityShiftReportState[] = [];
-  const events: HospitalityAdvanceResult['events'] = [];
+  const events: HospitalityAdvanceResult['events'] = [...marketAdvance.events];
 
   for (let venueIndex = 0; venueIndex < venues.length; venueIndex += 1) {
     const venue = venues[venueIndex];
@@ -380,14 +436,15 @@ export function advanceHospitalityDay(
     pantryLots = restock.pantryLots;
     organizations = restock.organizations;
     nextPantryLotNumber = restock.nextPantryLotNumber;
-    organization = organizations[organizationIndex];
-    if (!organization) continue;
+    const shiftOrganization = organizations[organizationIndex];
+    if (!shiftOrganization) continue;
+    organization = shiftOrganization;
     if (restock.spend > 0) {
       const pantryOperation: TradeOperationState = {
         id: `trade-operation-${day}-${nextOperationNumber++}`,
         day,
         kind: 'purchase',
-        organizationId: organization.id,
+        organizationId: shiftOrganization.id,
         counterpartyOrganizationId: null,
         assetId: asset.id,
         headline: `${asset.name}: пополнение кладовой`,
@@ -402,12 +459,17 @@ export function advanceHospitalityDay(
     const trafficMultiplier = region?.today.channelTraffic[concept.channel] ?? 1;
     const weekendBoost = region?.today.weekend ? (concept.channel === 'club' ? 1.32 : 1.14) : 1;
     const deterministicNoise = deterministicFraction(`${day}:${venue.id}:guests`, .87, 1.14);
-    const guests = Math.max(0, Math.round(Math.min(venue.capacity * 1.35, venue.capacity * concept.baseOccupancy * trafficMultiplier * weekendBoost * deterministicNoise + asset.footfall * .22)));
+    const competitionMultiplier = audienceCompetitionMultiplier({ venue, asset, venues, assets, organizations });
+    const marketingTraffic = 1 + venue.marketingIntensity * (.06 + shiftOrganization.reputation / 900);
+    const guests = Math.max(0, Math.round(Math.min(venue.capacity * 1.35, (venue.capacity * concept.baseOccupancy * trafficMultiplier * weekendBoost * deterministicNoise + asset.footfall * .22) * competitionMultiplier * marketingTraffic)));
     const serviceSecondsAvailable = Math.max(900, Math.round((venue.workforce.bartenders * 15_600 + venue.workforce.servers * 2_400 + venue.stations * 3_600) * (.7 + venue.serviceQuality / 250)));
     let remainingServiceSeconds = serviceSecondsAvailable;
-    const activeMenu = menuItems.filter((item) => item.venueId === venue.id && item.active && item.ingredients.length > 0);
+    menuItems = menuItems.map((item) => item.venueId === venue.id
+      ? { ...item, recentOrders: roundToThree(item.recentOrders * .86), recentRevenue: roundMoney(item.recentRevenue * .86) }
+      : item);
+    const activeMenu = menuItems.filter((item) => item.venueId === venue.id && item.listed && item.active && item.ingredients.length > 0);
     const scored = activeMenu
-      .map((item) => ({ item, score: scoreMenuItem(item, trade.products, demand, asset, organization, venue) }))
+      .map((item) => ({ item, score: scoreMenuItem(item, trade.products, demand, asset, shiftOrganization, venue) }))
       .filter((entry) => entry.score > 0)
       .sort((left, right) => right.score - left.score || left.item.preparationSeconds - right.item.preparationSeconds);
     const totalScore = scored.reduce((sum, entry) => sum + entry.score, 0);
@@ -479,6 +541,10 @@ export function advanceHospitalityDay(
       const menuIndex = menuItems.findIndex((item) => item.id === entry.item.id);
       if (menuIndex >= 0 && menuItems[menuIndex]) menuItems[menuIndex] = {
         ...menuItems[menuIndex],
+        recentOrders: roundToThree(menuItems[menuIndex].recentOrders + sold),
+        recentRevenue: roundMoney(menuItems[menuIndex].recentRevenue + revenue),
+        lastSoldDay: day,
+        weakReviewCount: Math.max(0, menuItems[menuIndex].weakReviewCount - 1),
         totalSold: menuItems[menuIndex].totalSold + sold,
         totalRevenue: roundMoney(menuItems[menuIndex].totalRevenue + revenue),
       };
@@ -532,6 +598,10 @@ export function advanceHospitalityDay(
       events.push({ tone: 'warning', title: incident.headline, detail: incident.detail });
     }
 
+    const wageAndOperations = roundMoney(asset.dailyOperatingCost * .45 + venue.workforce.bartenders * 58 + venue.workforce.servers * 41 + venue.workforce.security * 52 + venue.workforce.managers * 76);
+    const marketingSpend = roundMoney(concept.dailyOperatingCost * venue.marketingIntensity * .08);
+    const shiftProfit = roundMoney(shiftRevenue - shiftCost - wageAndOperations - marketingSpend);
+    const nextLossStreak = shiftProfit < 0 ? venue.lossStreak + 1 : Math.max(0, venue.lossStreak - 1);
     const report: HospitalityShiftReportState = {
       id: `hospitality-shift-${nextShiftNumber++}`,
       day,
@@ -549,25 +619,40 @@ export function advanceHospitalityDay(
       serviceUtilization,
       averageServeQuality,
       satisfaction,
+      profit: shiftProfit,
+      marketingSpend,
+      competitionMultiplier,
       incidentIds,
       items: itemReports,
     };
     reports.push(report);
 
-    const wageAndOperations = roundMoney(asset.dailyOperatingCost * .45 + venue.workforce.bartenders * 58 + venue.workforce.servers * 41 + venue.workforce.security * 52 + venue.workforce.managers * 76);
-    organizations = organizations.map((item) => item.id === organization.id ? {
+    organizations = organizations.map((item) => item.id === shiftOrganization.id ? {
       ...item,
-      cash: roundMoney(item.cash + shiftRevenue - wageAndOperations),
+      cash: roundMoney(item.cash + shiftRevenue - wageAndOperations - marketingSpend),
       dailyRevenue: roundMoney(item.dailyRevenue + shiftRevenue),
-      dailyCosts: roundMoney(item.dailyCosts + wageAndOperations),
+      dailyCosts: roundMoney(item.dailyCosts + wageAndOperations + marketingSpend),
+      status: item.id !== 'org-player' && nextLossStreak >= 6 ? 'strained' : item.status === 'strained' && nextLossStreak === 0 ? 'active' : item.status,
       reputation: clamp(item.reputation + (satisfaction >= 75 ? .12 : satisfaction < 50 ? -.22 : 0), 8, 99),
     } : item);
+    const updatedOrganization = organizations[organizationIndex] ?? shiftOrganization;
+    organization = updatedOrganization;
+    const shouldClose = updatedOrganization.id !== 'org-player'
+      && updatedOrganization.cash < -25_000;
+    if (shouldClose) {
+      organizations = organizations.map((item) => item.id === shiftOrganization.id ? { ...item, status: 'insolvent' } : item);
+      events.push({
+        tone: 'warning',
+        title: `${asset.name}: заведение закрывается`,
+        detail: `Убытки держались ${nextLossStreak} смен, денег на продолжение работы не осталось.`,
+      });
+    }
 
     const operation: TradeOperationState = {
       id: `trade-operation-${day}-${nextOperationNumber++}`,
       day,
       kind: 'sale',
-      organizationId: organization.id,
+      organizationId: shiftOrganization.id,
       counterpartyOrganizationId: null,
       assetId: asset.id,
       headline: `${asset.name}: смена завершена`,
@@ -613,6 +698,10 @@ export function advanceHospitalityDay(
     const serviceWear = guests / 115;
     venues[venueIndex] = {
       ...venue,
+      status: shouldClose ? 'closed' : venue.status,
+      closedDay: shouldClose ? day : venue.closedDay,
+      lossStreak: nextLossStreak,
+      lastShiftProfit: shiftProfit,
       reputation: clamp(venue.reputation + (satisfaction - 65) * .015, 10, 99),
       cleanliness: clamp(venue.cleanliness + nightlyCleaning - serviceWear, 30, 100),
       serviceQuality: clamp(venue.serviceQuality + (satisfaction >= 78 ? .08 : satisfaction < 48 ? -.15 : 0), 20, 100),
@@ -656,7 +745,7 @@ export function hospitalityVenueSummary(state: HospitalityState, venueId: string
   const venue = state.venues.find((item) => item.id === venueId);
   if (!venue) return { headline: 'Нет данных', detail: 'Заведение не зарегистрировано в hospitality-секторе.' };
   const last = state.shiftReports.find((report) => report.venueId === venue.id);
-  const menuCount = state.menuItems.filter((item) => item.venueId === venue.id && item.active).length;
+  const menuCount = state.menuItems.filter((item) => item.venueId === venue.id && item.listed && item.active).length;
   return {
     headline: `${hospitalityConcept(venue.concept).name} · меню ${menuCount}`,
     detail: last ? `${last.guests} гостей · ${last.orders} заказов · удовлетворённость ${last.satisfaction}/100` : 'Смена ещё не проводилась.',
@@ -697,6 +786,13 @@ function createVenue(asset: WorldAssetState, organizations: OrganizationState[],
     cleanliness: clamp(asset.condition + 5, 30, 100),
     serviceQuality: clamp(58 + (index * 7) % 25, 35, 92),
     securityLevel: clamp(50 + concept.security * 5, 35, 95),
+    targetSegmentId: targetSegmentForConcept(conceptId),
+    marketingIntensity: roundToThree(clamp(.3 + concept.priceMultiplier * .14 + (index % 4) * .05, .25, .85)),
+    lastMenuReviewDay: null,
+    menuRevisionCount: 0,
+    lossStreak: 0,
+    lastShiftProfit: 0,
+    closedDay: null,
     totalGuests: 0,
     totalOrders: 0,
     totalRevenue: 0,
@@ -710,21 +806,32 @@ function normalizeHospitalityState(
   organizations: OrganizationState[],
   assets: WorldAssetState[],
   trade: TradeState,
+  demand: DemandState,
   day: number,
 ): HospitalityState {
   const existingByAsset = new Map((state.venues ?? []).map((item) => [item.assetId, item]));
   const venues = assets.filter((asset) => isHospitalityAssetType(asset.type) && asset.operatorOrganizationId).map((asset, index) => {
     const current = existingByAsset.get(asset.id);
     if (!current) return createVenue(asset, organizations, day, index);
+    const operatorChanged = Boolean(asset.operatorOrganizationId && asset.operatorOrganizationId !== current.operatorOrganizationId);
     return {
       ...current,
       operatorOrganizationId: asset.operatorOrganizationId ?? current.operatorOrganizationId,
       concept: hospitalityConceptForAssetType(asset.type),
-      status: asset.status === 'operating' ? 'open' : asset.status === 'closed' ? 'closed' : current.status,
+      status: operatorChanged
+        ? asset.status === 'operating' ? 'open' : 'closed'
+        : current.closedDay !== null && current.closedDay !== undefined ? 'closed' : asset.status === 'operating' ? 'open' : asset.status === 'closed' ? 'closed' : current.status,
       capacity: asset.capacity || current.capacity,
       workforce: { ...current.workforce },
       menuItemIds: current.menuItemIds ?? [],
       openContainerIds: current.openContainerIds ?? [],
+      targetSegmentId: current.targetSegmentId ?? targetSegmentForConcept(hospitalityConceptForAssetType(asset.type)),
+      marketingIntensity: current.marketingIntensity ?? .45,
+      lastMenuReviewDay: operatorChanged ? null : current.lastMenuReviewDay ?? null,
+      menuRevisionCount: current.menuRevisionCount ?? 0,
+      lossStreak: operatorChanged ? 0 : current.lossStreak ?? 0,
+      lastShiftProfit: operatorChanged ? 0 : current.lastShiftProfit ?? 0,
+      closedDay: operatorChanged ? null : current.closedDay ?? null,
     };
   });
   const rawItems = (state.menuItems ?? []) as Array<Partial<HospitalityMenuItemState> & { amountMl?: number; ingredients?: Array<Partial<HospitalityMenuIngredientState> & { amountMl?: number }> }>;
@@ -752,8 +859,16 @@ function normalizeHospitalityState(
       ingredients,
       materialCost: item.materialCost ?? calculateMenuMaterialCost(ingredients, trade.products),
       salePrice: item.salePrice ?? 0,
+      listed: item.listed ?? true,
       active: item.active ?? true,
       availabilityReason: item.availabilityReason ?? null,
+      marketScore: item.marketScore ?? 1,
+      trendScore: item.trendScore ?? 1,
+      competitionPressure: item.competitionPressure ?? 0,
+      recentOrders: item.recentOrders ?? 0,
+      recentRevenue: item.recentRevenue ?? 0,
+      lastSoldDay: item.lastSoldDay ?? null,
+      weakReviewCount: item.weakReviewCount ?? 0,
       totalSold: item.totalSold ?? 0,
       totalRevenue: item.totalRevenue ?? 0,
       createdDay: item.createdDay ?? day,
@@ -762,8 +877,9 @@ function normalizeHospitalityState(
   const existingPantry = (state.pantryLots ?? []).map((item) => ({ ...item }));
   const missingPantryVenues = venues.filter((venue) => supportsCocktails(venue.concept) && !existingPantry.some((lot) => lot.venueId === venue.id));
   const pantrySeed = createInitialPantryLots(missingPantryVenues, day, state.nextPantryLotNumber ?? 1);
+  const market = normalizeHospitalityMarketState(state, demand, assets, venues, menuItems, organizations, day);
   const normalized: HospitalityState = {
-    hospitalityVersion: 2,
+    hospitalityVersion: 3,
     venues,
     menuItems,
     openContainers: (state.openContainers ?? []).map((item) => ({ ...item, sourceLotAllocations: cloneAllocations(item.sourceLotAllocations) })),
@@ -772,28 +888,157 @@ function normalizeHospitalityState(
       ...report,
       serviceUtilization: report.serviceUtilization ?? 0,
       averageServeQuality: report.averageServeQuality ?? 0,
+      profit: report.profit ?? roundMoney((report.revenue ?? 0) - (report.costOfGoods ?? 0)),
+      marketingSpend: report.marketingSpend ?? 0,
+      competitionMultiplier: report.competitionMultiplier ?? 1,
       items: (report.items ?? []).map((item) => ({ ...item, pantryConsumed: item.pantryConsumed ?? 0, quality: item.quality ?? 0 })),
     })),
     incidents: state.incidents ?? [],
+    tasteProfiles: market.tasteProfiles,
+    cocktailTrends: market.cocktailTrends,
+    trendHistory: market.trendHistory,
     nextMenuItemNumber: state.nextMenuItemNumber ?? Math.max(1, menuItems.length + 1),
     nextContainerNumber: state.nextContainerNumber ?? 1,
     nextPantryLotNumber: pantrySeed.nextPantryLotNumber,
     nextShiftNumber: state.nextShiftNumber ?? 1,
     nextIncidentNumber: state.nextIncidentNumber ?? 1,
   };
-  return ensureHospitalityMenus(normalized, trade, day);
+  return ensureHospitalityMenus(normalized, trade, assets, day);
 }
 
-function ensureHospitalityMenus(state: HospitalityState, trade: TradeState, day: number): HospitalityState {
+function reviewHospitalityMenus(
+  state: HospitalityState,
+  trade: TradeState,
+  assets: WorldAssetState[],
+  organizations: OrganizationState[],
+  day: number,
+): HospitalityState {
+  let nextMenuNumber = state.nextMenuItemNumber;
+  const menuItems = state.menuItems.map(cloneMenuItem);
+  const venues = state.venues.map((venue) => {
+    if (!supportsCocktails(venue.concept) || venue.status !== 'open') return venue;
+    if (venue.lastMenuReviewDay === null) return { ...venue, lastMenuReviewDay: day };
+    if (day - venue.lastMenuReviewDay < 7) return venue;
+    const asset = assets.find((item) => item.id === venue.assetId);
+    const organization = organizations.find((item) => item.id === venue.operatorOrganizationId);
+    if (!asset || !organization) return { ...venue, lastMenuReviewDay: day };
+    const concept = hospitalityConcept(venue.concept);
+    const financiallyPressed = organization.status === 'strained' || organization.cash < concept.dailyOperatingCost * 12;
+    const baseSlots = effectiveCocktailSlots(venue, concept.menuSlots);
+    const targetSlots = Math.max(3, baseSlots - (financiallyPressed ? 2 : 0));
+    const venueCocktails = menuItems.filter((item) => item.venueId === venue.id && item.kind === 'cocktail');
+    let listed = venueCocktails.filter((item) => item.listed);
+    const itemScore = (item: HospitalityMenuItemState): number => item.recentOrders * .08
+      + item.marketScore * 2.3
+      + item.trendScore * 2.8
+      - item.competitionPressure * 2.1
+      + Math.min(1.5, item.totalSold / 500);
+
+    if (listed.length > targetSlots) {
+      const excess = listed.slice().sort((left, right) => itemScore(left) - itemScore(right)).slice(0, listed.length - targetSlots);
+      const excessIds = new Set(excess.map((item) => item.id));
+      for (let index = 0; index < menuItems.length; index += 1) {
+        const item = menuItems[index];
+        if (!item || !excessIds.has(item.id)) continue;
+        menuItems[index] = { ...item, listed: false, active: false, availabilityReason: 'Меню сокращено из-за финансового давления', weakReviewCount: item.weakReviewCount + 1 };
+      }
+      listed = listed.filter((item) => !excessIds.has(item.id));
+    }
+
+    const shelves = trade.shelves.filter((shelf) => shelf.assetId === venue.assetId);
+    const candidates = cocktailRecipes
+      .map((recipe) => {
+        const ingredients = resolveCocktailIngredients(recipe.ingredients, shelves, trade.products);
+        const score = cocktailFitScore(recipe, venue.concept) + recipeRegionalScore(recipe, asset.regionId, state) * 15;
+        return { recipe, ingredients, score };
+      })
+      .filter((entry): entry is { recipe: CocktailRecipeDefinition; ingredients: HospitalityMenuIngredientState[]; score: number } => Boolean(entry.ingredients))
+      .sort((left, right) => right.score - left.score || left.recipe.id.localeCompare(right.recipe.id));
+
+    const listedRecipeIds = new Set(listed.map((item) => item.recipeId).filter((id): id is string => Boolean(id)));
+    const replacementCandidates = candidates.filter((entry) => !listedRecipeIds.has(entry.recipe.id));
+    const weakItems = listed.slice().sort((left, right) => itemScore(left) - itemScore(right));
+    let replacements = 0;
+    const maxReplacements = financiallyPressed ? 1 : 2;
+    for (const weak of weakItems) {
+      if (replacements >= maxReplacements || listed.length <= 3) break;
+      const weakAge = day - weak.createdDay;
+      const weakPerformance = weak.recentOrders < 2.5 || weak.lastSoldDay === null || day - weak.lastSoldDay >= 7;
+      const candidate = replacementCandidates.shift();
+      const candidateScore = candidate ? candidate.score / 6 : 0;
+      if (weakAge < 7 || (!weakPerformance && candidateScore <= itemScore(weak) * 1.15)) continue;
+      const weakIndex = menuItems.findIndex((item) => item.id === weak.id);
+      if (weakIndex >= 0 && menuItems[weakIndex]) menuItems[weakIndex] = {
+        ...menuItems[weakIndex],
+        listed: false,
+        active: false,
+        availabilityReason: candidate ? 'Снято после анализа продаж и регионального спроса' : 'Снято после слабых продаж: доступной замены нет',
+        weakReviewCount: menuItems[weakIndex].weakReviewCount + 1,
+      };
+      if (!candidate) {
+        listed = listed.filter((item) => item.id !== weak.id);
+        replacements += 1;
+        continue;
+      }
+      const existing = menuItems.find((item) => item.venueId === venue.id && item.recipeId === candidate.recipe.id);
+      const materialCost = calculateMenuMaterialCost(candidate.ingredients, trade.products);
+      if (existing) {
+        const existingIndex = menuItems.findIndex((item) => item.id === existing.id);
+        if (existingIndex >= 0) menuItems[existingIndex] = refreshMenuItemAvailability({
+          ...existing,
+          listed: true,
+          availabilityReason: null,
+          ingredients: candidate.ingredients,
+          materialCost,
+          salePrice: cocktailSalePrice(materialCost, candidate.recipe, concept.priceMultiplier, trade.products, candidate.ingredients),
+          weakReviewCount: Math.max(0, existing.weakReviewCount - 1),
+        }, venue, trade, state.openContainers, state.pantryLots, day);
+      } else {
+        menuItems.push(createCocktailMenuItem(venue, candidate.recipe, candidate.ingredients, materialCost, concept.priceMultiplier, trade, state, assets, day, nextMenuNumber++));
+      }
+      listedRecipeIds.add(candidate.recipe.id);
+      listed = listed.filter((item) => item.id !== weak.id);
+      replacements += 1;
+    }
+
+    for (let index = 0; index < menuItems.length; index += 1) {
+      const item = menuItems[index];
+      if (!item || item.venueId !== venue.id || item.kind !== 'cocktail' || !item.listed) continue;
+      const weak = item.recentOrders < 1.5 && day - item.createdDay >= 7;
+      menuItems[index] = { ...item, weakReviewCount: weak ? item.weakReviewCount + 1 : Math.max(0, item.weakReviewCount - 1) };
+    }
+
+    const marketingIntensity = financiallyPressed
+      ? clamp(venue.marketingIntensity - .04, .18, .9)
+      : venue.lastShiftProfit > 0 ? clamp(venue.marketingIntensity + .015, .18, .9) : venue.marketingIntensity;
+    return {
+      ...venue,
+      marketingIntensity: roundToThree(marketingIntensity),
+      lastMenuReviewDay: day,
+      menuRevisionCount: venue.menuRevisionCount + replacements + Math.max(0, venueCocktails.filter((item) => item.listed).length - targetSlots),
+    };
+  });
+  return { ...state, venues, menuItems, nextMenuItemNumber: nextMenuNumber };
+}
+
+function effectiveCocktailSlots(venue: HospitalityVenueState, menuSlots: number): number {
+  const base = Math.max(5, Math.floor(menuSlots * .58));
+  if (venue.lossStreak >= 12) return Math.max(3, base - 4);
+  if (venue.lossStreak >= 6) return Math.max(3, base - 2);
+  return base;
+}
+
+function ensureHospitalityMenus(state: HospitalityState, trade: TradeState, assets: WorldAssetState[], day: number): HospitalityState {
   let nextMenuNumber = state.nextMenuItemNumber;
   const menuItems = state.menuItems.map(cloneMenuItem);
   const venues = state.venues.map((venue) => {
     const concept = hospitalityConcept(venue.concept);
+    const asset = assets.find((item) => item.id === venue.assetId);
     const shelves = trade.shelves.filter((shelf) => shelf.assetId === venue.assetId);
     const venueItems = menuItems.filter((item) => item.venueId === venue.id);
-    const cocktailSlots = supportsCocktails(venue.concept) ? Math.max(5, Math.floor(concept.menuSlots * .58)) : 0;
-    const directSlots = Math.max(1, concept.menuSlots - cocktailSlots);
-    const directItems = venueItems.filter((item) => item.kind !== 'cocktail');
+    const cocktailSlots = supportsCocktails(venue.concept) ? effectiveCocktailSlots(venue, concept.menuSlots) : 0;
+    const directSlots = Math.max(1, concept.menuSlots - Math.max(0, cocktailSlots));
+    const directItems = venueItems.filter((item) => item.kind !== 'cocktail' && item.listed);
     const representedProductIds = new Set(directItems.flatMap((item) => item.ingredients.map((ingredient) => ingredient.productId).filter((id): id is string => Boolean(id))));
     const rankedShelves = shelves.slice().sort((left, right) => {
       const leftProduct = trade.products.find((item) => item.id === left.productId);
@@ -810,15 +1055,21 @@ function ensureHospitalityMenus(state: HospitalityState, trade: TradeState, day:
       representedProductIds.add(product.id);
     }
 
-    if (cocktailSlots > 0) {
-      const recipes = cocktailRecipes.slice().sort((left, right) => cocktailFitScore(right, venue.concept) - cocktailFitScore(left, venue.concept) || left.id.localeCompare(right.id));
-      const existingByRecipe = new Map(menuItems.filter((item) => item.venueId === venue.id && item.recipeId).map((item) => [item.recipeId, item]));
-      let cocktailCount = menuItems.filter((item) => item.venueId === venue.id && item.kind === 'cocktail').length;
+    if (cocktailSlots > 0 && asset) {
+      const recipes = cocktailRecipes.slice().sort((left, right) => {
+        const leftScore = cocktailFitScore(left, venue.concept) + recipeRegionalScore(left, asset.regionId, state) * 12;
+        const rightScore = cocktailFitScore(right, venue.concept) + recipeRegionalScore(right, asset.regionId, state) * 12;
+        return rightScore - leftScore || left.id.localeCompare(right.id);
+      });
+      const existingByRecipe = new Map(menuItems.filter((item) => item.venueId === venue.id && item.recipeId).map((item) => [item.recipeId!, item]));
+      let listedCocktailCount = menuItems.filter((item) => item.venueId === venue.id && item.kind === 'cocktail' && item.listed).length;
+      const initialBuild = venue.lastMenuReviewDay === null && venue.menuRevisionCount === 0;
       for (const recipe of recipes) {
         const existing = existingByRecipe.get(recipe.id);
         const ingredients = resolveCocktailIngredients(recipe.ingredients, shelves, trade.products);
         if (!ingredients) continue;
         const materialCost = calculateMenuMaterialCost(ingredients, trade.products);
+        const metrics = cocktailMarketMetrics({ recipeId: recipe.id, venue, asset, market: state, menuItems, assets });
         if (existing) {
           const index = menuItems.findIndex((item) => item.id === existing.id);
           if (index >= 0) menuItems[index] = refreshMenuItemAvailability({
@@ -834,33 +1085,14 @@ function ensureHospitalityMenus(state: HospitalityState, trade: TradeState, day:
             ingredients,
             materialCost,
             salePrice: cocktailSalePrice(materialCost, recipe, concept.priceMultiplier, trade.products, ingredients),
+            ...metrics,
           }, venue, trade, state.openContainers, state.pantryLots, day);
           continue;
         }
-        if (cocktailCount >= cocktailSlots) continue;
-        const item = refreshMenuItemAvailability({
-          id: `hospitality-menu-${nextMenuNumber++}`,
-          venueId: venue.id,
-          name: recipe.name,
-          kind: 'cocktail',
-          recipeId: recipe.id,
-          method: recipe.method,
-          glassware: recipe.glassware,
-          ice: recipe.ice,
-          garnish: [...recipe.garnish],
-          preparationSeconds: recipe.preparationSeconds,
-          complexity: recipe.complexity,
-          ingredients,
-          materialCost,
-          salePrice: cocktailSalePrice(materialCost, recipe, concept.priceMultiplier, trade.products, ingredients),
-          active: true,
-          availabilityReason: null,
-          totalSold: 0,
-          totalRevenue: 0,
-          createdDay: day,
-        }, venue, trade, state.openContainers, state.pantryLots, day);
-        menuItems.push(item);
-        cocktailCount += 1;
+        if (!initialBuild || listedCocktailCount >= cocktailSlots) continue;
+        const item = createCocktailMenuItem(venue, recipe, ingredients, materialCost, concept.priceMultiplier, trade, state, assets, day, nextMenuNumber++);
+        menuItems.push(refreshMenuItemAvailability(item, venue, trade, state.openContainers, state.pantryLots, day));
+        listedCocktailCount += 1;
       }
     }
 
@@ -869,9 +1101,59 @@ function ensureHospitalityMenus(state: HospitalityState, trade: TradeState, day:
   });
   const refreshed = menuItems.map((item) => {
     const venue = venues.find((candidate) => candidate.id === item.venueId);
-    return venue ? refreshMenuItemAvailability(item, venue, trade, state.openContainers, state.pantryLots, day) : item;
+    const asset = venue ? assets.find((candidate) => candidate.id === venue.assetId) : undefined;
+    if (!venue) return item;
+    const metrics = item.recipeId && asset
+      ? cocktailMarketMetrics({ recipeId: item.recipeId, venue, asset, market: state, menuItems, assets })
+      : { marketScore: item.marketScore, trendScore: item.trendScore, competitionPressure: item.competitionPressure };
+    return refreshMenuItemAvailability({ ...item, ...metrics }, venue, trade, state.openContainers, state.pantryLots, day);
   });
   return { ...state, venues, menuItems: refreshed, nextMenuItemNumber: nextMenuNumber };
+}
+
+function createCocktailMenuItem(
+  venue: HospitalityVenueState,
+  recipe: CocktailRecipeDefinition,
+  ingredients: HospitalityMenuIngredientState[],
+  materialCost: number,
+  priceMultiplier: number,
+  trade: TradeState,
+  market: HospitalityState,
+  assets: WorldAssetState[],
+  day: number,
+  number: number,
+): HospitalityMenuItemState {
+  const asset = assets.find((item) => item.id === venue.assetId);
+  const metrics = asset
+    ? cocktailMarketMetrics({ recipeId: recipe.id, venue, asset, market, menuItems: market.menuItems, assets })
+    : { marketScore: 1, trendScore: 1, competitionPressure: 0 };
+  return {
+    id: `hospitality-menu-${number}`,
+    venueId: venue.id,
+    name: recipe.name,
+    kind: 'cocktail',
+    recipeId: recipe.id,
+    method: recipe.method,
+    glassware: recipe.glassware,
+    ice: recipe.ice,
+    garnish: [...recipe.garnish],
+    preparationSeconds: recipe.preparationSeconds,
+    complexity: recipe.complexity,
+    ingredients,
+    materialCost,
+    salePrice: cocktailSalePrice(materialCost, recipe, priceMultiplier, trade.products, ingredients),
+    listed: true,
+    active: true,
+    availabilityReason: null,
+    ...metrics,
+    recentOrders: 0,
+    recentRevenue: 0,
+    lastSoldDay: null,
+    weakReviewCount: 0,
+    totalSold: 0,
+    totalRevenue: 0,
+    createdDay: day,
+  };
 }
 
 function ensureHospitalityTrade(tradeInput: TradeState, organizations: OrganizationState[], assets: WorldAssetState[], day: number): TradeState {
@@ -1000,8 +1282,16 @@ function createProductMenuItem(venueId: string, product: TradeProductState, pric
     ingredients: [{ productId: product.id, categoryId: category, pantryTag: null, amount, unit: 'ml' }],
     materialCost: roundMoney(unitCost),
     salePrice: roundMoney(basePrice * priceMultiplier),
+    listed: true,
     active: true,
     availabilityReason: null,
+    marketScore: 1,
+    trendScore: 1,
+    competitionPressure: 0,
+    recentOrders: 0,
+    recentRevenue: 0,
+    lastSoldDay: null,
+    weakReviewCount: 0,
     totalSold: 0,
     totalRevenue: 0,
     createdDay: day,
@@ -1078,7 +1368,11 @@ function scoreMenuItem(
     ? venue.concept === 'cocktail_bar' ? 1.58 : venue.concept === 'lounge' || venue.concept === 'hotel_bar' ? 1.34 : venue.concept === 'nightclub' ? 1.18 : .92
     : 1;
   const complexityFit = item.kind === 'cocktail' && venue.concept === 'nightclub' ? clamp(1.22 - item.complexity * .07, .78, 1.15) : 1;
-  return Math.max(.05, result.demandIndex * preferred * cocktailBonus * complexityFit * (.72 + quality / 175));
+  const marketFit = item.kind === 'cocktail' ? clamp(.58 + item.marketScore * .48, .55, 1.45) : 1;
+  const trendFit = item.kind === 'cocktail' ? clamp(.68 + item.trendScore * .34, .55, 1.5) : 1;
+  const competitionFit = item.kind === 'cocktail' ? clamp(1.08 - item.competitionPressure * .34, .52, 1.08) : 1;
+  const promotionFit = 1 + venue.marketingIntensity * .08;
+  return Math.max(.05, result.demandIndex * preferred * cocktailBonus * complexityFit * marketFit * trendFit * competitionFit * promotionFit * (.72 + quality / 175));
 }
 
 function availableMenuPortions(
@@ -1331,11 +1625,11 @@ function refreshMenuItemAvailability(
   pantryLots: HospitalityPantryLotState[],
   day: number,
 ): HospitalityMenuItemState {
-  const portions = availableMenuPortions(item, trade, openContainers, pantryLots, venue.id, day);
+  const portions = item.listed ? availableMenuPortions(item, trade, openContainers, pantryLots, venue.id, day) : 0;
   return {
     ...cloneMenuItem(item),
-    active: portions > 0,
-    availabilityReason: portions > 0 ? null : menuAvailabilityReason(item, trade, openContainers, pantryLots, venue.id, day),
+    active: item.listed && portions > 0,
+    availabilityReason: !item.listed ? item.availabilityReason ?? 'Снято после анализа меню' : portions > 0 ? null : menuAvailabilityReason(item, trade, openContainers, pantryLots, venue.id, day),
   };
 }
 
@@ -1557,4 +1851,8 @@ function roundMoney(value: number): number {
 
 function roundToOne(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function roundToThree(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }

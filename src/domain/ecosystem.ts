@@ -407,13 +407,13 @@ export function createEcosystemState(input: {
   const baseAssets = [playerAsset, ...producerAssets, ...supplierAssets, ...outletAssets, ...vacantAssets, ...primarySector.assets, ...logisticsSector.assets, ...packagingSector.assets, ...hospitalityFoundation.assets];
   const seededTrade = createTradeState(baseOrganizations, baseAssets, input.day);
   const packagingReady = ensurePackagingSector({ state: packagingSector.packaging, organizations: baseOrganizations, assets: baseAssets, trade: seededTrade, day: input.day });
-  const hospitalityReady = ensureHospitalitySector({ state: undefined, organizations: packagingReady.organizations, assets: packagingReady.assets, trade: packagingReady.trade, day: input.day });
+  const demand = createDemandState(input.day, `${input.playerCompanyName}:${input.countryId}:${input.regionId}`);
+  const hospitalityReady = ensureHospitalitySector({ state: undefined, organizations: packagingReady.organizations, assets: packagingReady.assets, trade: packagingReady.trade, demand, day: input.day });
   const trade = hospitalityReady.trade;
   const qualitySector = createQualitySector(hospitalityReady.organizations, hospitalityReady.assets, trade, input.day);
   const financialOrganizations = ensureFinancialOrganizations(qualitySector.organizations, qualitySector.assets, input.day);
   const organizations = financialOrganizations.organizations;
   const assets = financialOrganizations.assets;
-  const demand = createDemandState(input.day, `${input.playerCompanyName}:${input.countryId}:${input.regionId}`);
   const financials = createFinancialSystem(organizations, assets, input.day);
   const regulation = createRegulationState(organizations, assets, trade, input.day);
   const kernel = createEcosystemKernel({
@@ -528,11 +528,11 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
     ? normalizeTradeState(state.trade)
     : createTradeState(logisticsSector.organizations, logisticsSector.assets, day);
   const packagingSector = ensurePackagingSector({ state: state.packaging, organizations: logisticsSector.organizations, assets: logisticsSector.assets, trade: baseTrade, day });
-  const hospitalitySector = ensureHospitalitySector({ state: state.hospitality, organizations: packagingSector.organizations, assets: packagingSector.assets, trade: packagingSector.trade, day });
+  const demand = normalizeDemandState(state.demand, day, `${state.playerOrganizationId}:${packagingSector.organizations.length}:${packagingSector.assets.length}`);
+  const hospitalitySector = ensureHospitalitySector({ state: state.hospitality, organizations: packagingSector.organizations, assets: packagingSector.assets, trade: packagingSector.trade, demand, day });
   const trade = hospitalitySector.trade;
   const qualitySector = ensureQualitySector({ state: state.quality, organizations: hospitalitySector.organizations, assets: hospitalitySector.assets, trade, day });
   const financialOrganizations = ensureFinancialOrganizations(qualitySector.organizations, qualitySector.assets, day);
-  const demand = normalizeDemandState(state.demand, day, `${state.playerOrganizationId}:${financialOrganizations.organizations.length}:${financialOrganizations.assets.length}`);
   const financials = normalizeFinancialSystem(state.financials, financialOrganizations.organizations, financialOrganizations.assets, day);
   const regulation = normalizeRegulationState(state.regulation, financialOrganizations.organizations, financialOrganizations.assets, trade, day);
   const kernel = normalizeEcosystemKernel(state.kernel, {
@@ -921,6 +921,12 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
       transactions = [transaction, ...transactions].slice(0, 160);
       nextTransactionNumber += 1;
       events.push({ tone: 'market', title: transaction.headline, detail: transaction.detail });
+      if (isHospitalityAssetType(targetAsset.type)) {
+        const rebound = refreshHospitalitySector(ecosystem, organizations, assets, ecosystem.trade, day);
+        organizations = rebound.organizations;
+        assets = rebound.assets;
+        ecosystem = { ...ecosystem, hospitality: rebound.hospitality, trade: rebound.trade };
+      }
     }
   }
 
@@ -1032,7 +1038,7 @@ function refreshHospitalitySector(
       ? { ...shipment, buyerOrganizationId: operatorByAssetId.get(shipment.buyerAssetId)! }
       : shipment),
   };
-  return ensureHospitalitySector({ state: state.hospitality, organizations, assets, trade: reboundTrade, day });
+  return ensureHospitalitySector({ state: state.hospitality, organizations, assets, trade: reboundTrade, demand: state.demand, day });
 }
 
 function stockHospitalityVenue(

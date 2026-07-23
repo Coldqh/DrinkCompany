@@ -383,6 +383,33 @@ export function synchronizeKernelFromHospitality(kernel: EcosystemKernelState, h
       });
     }
   }
+
+  const recordedTrendFacts = new Set(next.knowledge
+    .filter((fact) => fact.factKey.startsWith('hospitality.cocktail_trend:'))
+    .map((fact) => `${fact.subjectEntityId}:${fact.factKey}:${fact.learnedDay}`));
+  for (const snapshot of hospitality.trendHistory.slice().sort((left, right) => left.day - right.day)) {
+    const subjectEntityId = `region:${snapshot.regionId}`;
+    const factKey = `hospitality.cocktail_trend:${snapshot.recipeId}`;
+    const dedupeKey = `${subjectEntityId}:${factKey}:${snapshot.day}`;
+    if (recordedTrendFacts.has(dedupeKey)) continue;
+    const fact: KernelKnowledgeFact = {
+      id: `knowledge-${next.nextKnowledgeNumber}`,
+      observerOrganizationId: 'system-market',
+      subjectEntityId,
+      factKey,
+      value: `${snapshot.stage}|popularity=${snapshot.popularity}|momentum=${snapshot.momentum}|saturation=${snapshot.saturation}|cause=${snapshot.cause}`,
+      confidence: .98,
+      learnedDay: snapshot.day,
+      expiresDay: null,
+      source: 'public_record',
+    };
+    next = {
+      ...next,
+      knowledge: [...next.knowledge, fact].slice(-5000),
+      nextKnowledgeNumber: next.nextKnowledgeNumber + 1,
+    };
+    recordedTrendFacts.add(dedupeKey);
+  }
   return next;
 }
 
