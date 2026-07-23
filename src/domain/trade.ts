@@ -5,6 +5,7 @@ import { advanceIndustrialProductionDay, createIndustrialProductionState, normal
 import { packagingComponent, packagingProfileForCategory, packagingRequirements } from '../data/packagingCatalog';
 import type { OrganizationState, WorldAssetState } from './ecosystem';
 import { calculateShelfDemand, recordConsumerPurchase, type DemandState } from './demand';
+import { isHospitalityAssetType } from '../data/hospitalityCatalog';
 
 export type TradeCommodityKind = 'ingredient' | 'packaging' | 'product';
 export type TradeProductFamily = 'beer' | 'cider' | 'wine' | 'spirit' | 'liqueur' | 'alcohol_free';
@@ -436,7 +437,7 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
     } else if (shipment.buyerAssetId) {
       const product = trade.products.find((item) => item.id === shipment.commodityId);
       const buyerAsset = assets.find((item) => item.id === shipment.buyerAssetId);
-      if (buyerAsset && (buyerAsset.type === 'bar' || buyerAsset.type === 'shop')) {
+      if (buyerAsset && (buyerAsset.type === 'shop' || isHospitalityAssetType(buyerAsset.type))) {
         const existing = trade.shelves.find((item) => item.assetId === shipment.buyerAssetId && item.productId === shipment.commodityId);
         if (existing) {
           existing.units += shipment.quantity;
@@ -472,6 +473,7 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
     const asset = assets.find((item) => item.id === listing.assetId);
     const product = trade.products.find((item) => item.id === listing.productId);
     const operator = asset?.operatorOrganizationId ? nextOrganizations.find((item) => item.id === asset.operatorOrganizationId) : null;
+    if (asset && isHospitalityAssetType(asset.type)) return { ...listing, unitsSoldToday: 0, revenueToday: 0, soldLotAllocationsToday: [] };
     if (!asset || !product || !operator || asset.status !== 'operating' || listing.units <= 0) {
       const stockoutDays = listing.units <= 0 ? listing.stockoutDays + 1 : listing.stockoutDays;
       if (product && listing.units <= 0 && stockoutDays === 2) {

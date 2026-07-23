@@ -52,6 +52,13 @@ export interface ObserverSimulationReport {
   intermediateLotCount: number;
   maturationLotCount: number;
   blendRecipeCount: number;
+  hospitalityVenueCount: number;
+  hospitalityMenuItemCount: number;
+  hospitalityShiftCount: number;
+  hospitalityGuestCount: number;
+  hospitalityRevenue: number;
+  openContainerCount: number;
+  hospitalityIncidentCount: number;
   finalPlayerCash: number;
   violations: string[];
 }
@@ -140,6 +147,13 @@ export function runObserverSimulation(initial: GameState, days: number, options:
         intermediateLotCount: 0,
         maturationLotCount: 0,
         blendRecipeCount: 0,
+        hospitalityVenueCount: 0,
+        hospitalityMenuItemCount: 0,
+        hospitalityShiftCount: 0,
+        hospitalityGuestCount: 0,
+        hospitalityRevenue: 0,
+        openContainerCount: 0,
+        hospitalityIncidentCount: 0,
         finalPlayerCash: state.finance.cash,
         violations: state.phase === 'operating' ? ['Operating state has no ecosystem'] : [],
       },
@@ -176,6 +190,12 @@ export function runObserverSimulation(initial: GameState, days: number, options:
   violations.push(...validateIndustrialProductionState(ecosystem.trade.industrial));
   const licenseIds = new Set(ecosystem.regulation.licenses.map((license) => license.id));
   if (licenseIds.size !== ecosystem.regulation.licenses.length) violations.push('Дублирующиеся регуляторные лицензии');
+  const hospitalityVenueIds = new Set(ecosystem.hospitality.venues.map((venue) => venue.id));
+  if (hospitalityVenueIds.size !== ecosystem.hospitality.venues.length) violations.push('Дублирующиеся заведения hospitality-сектора');
+  if (ecosystem.hospitality.venues.some((venue) => !assetIds.has(venue.assetId))) violations.push('Заведение ссылается на неизвестный объект');
+  if (ecosystem.hospitality.openContainers.some((container) => container.remainingMl < 0 || container.remainingMl > container.initialMl + .01)) violations.push('Некорректный остаток открытой бутылки или кега');
+  if (ecosystem.hospitality.menuItems.some((item) => item.ingredients.some((ingredient) => ingredient.productId && !ecosystem.trade.products.some((product) => product.id === ingredient.productId)))) violations.push('Позиция меню ссылается на неизвестный продукт');
+  if (ecosystem.hospitality.shiftReports.some((report) => report.guests < 0 || report.orders < 0 || report.revenue < 0 || report.costOfGoods < 0)) violations.push('Некорректный отчёт смены заведения');
   return {
     state,
     report: {
@@ -226,6 +246,13 @@ export function runObserverSimulation(initial: GameState, days: number, options:
       intermediateLotCount: ecosystem.trade.industrial.intermediateLots.length,
       maturationLotCount: ecosystem.trade.industrial.maturationLots.length,
       blendRecipeCount: ecosystem.trade.industrial.blendRecipes.length,
+      hospitalityVenueCount: ecosystem.hospitality.venues.length,
+      hospitalityMenuItemCount: ecosystem.hospitality.menuItems.length,
+      hospitalityShiftCount: ecosystem.hospitality.shiftReports.length,
+      hospitalityGuestCount: ecosystem.hospitality.venues.reduce((sum, venue) => sum + venue.totalGuests, 0),
+      hospitalityRevenue: ecosystem.hospitality.venues.reduce((sum, venue) => sum + venue.totalRevenue, 0),
+      openContainerCount: ecosystem.hospitality.openContainers.length,
+      hospitalityIncidentCount: ecosystem.hospitality.incidents.length,
       finalPlayerCash: state.finance.cash,
       violations,
     },

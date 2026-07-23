@@ -1,9 +1,10 @@
 import type { QualityState } from './quality';
 import type { FinancialSystemState } from './finance';
 import type { PackagingState } from './packaging';
+import type { HospitalityState } from './hospitality';
 import { beverageBlueprints, type BeverageCategoryId } from '../data/beverageCatalog';
 
-export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment' | 'authority' | 'license' | 'inspection' | 'tax_obligation' | 'primary_site' | 'harvest' | 'vehicle' | 'route' | 'freight_job' | 'quality_lab' | 'quality_sample' | 'quality_certificate' | 'quality_incident' | 'recall' | 'bank_account' | 'invoice' | 'credit_facility' | 'loan' | 'insurance_policy' | 'financial_statement' | 'packaging_job' | 'packaging_return' | 'process_plan' | 'process_run' | 'intermediate_lot' | 'maturation_lot' | 'blend_recipe';
+export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment' | 'authority' | 'license' | 'inspection' | 'tax_obligation' | 'primary_site' | 'harvest' | 'vehicle' | 'route' | 'freight_job' | 'quality_lab' | 'quality_sample' | 'quality_certificate' | 'quality_incident' | 'recall' | 'bank_account' | 'invoice' | 'credit_facility' | 'loan' | 'insurance_policy' | 'financial_statement' | 'packaging_job' | 'packaging_return' | 'process_plan' | 'process_run' | 'intermediate_lot' | 'maturation_lot' | 'blend_recipe' | 'hospitality_venue' | 'menu_item' | 'shift_report';
 export type LedgerAccount = `org:${string}:cash` | `org:${string}:revenue` | `org:${string}:expense` | `org:${string}:receivable` | `org:${string}:payable` | `org:${string}:inventory` | `org:${string}:debt` | `system:${string}`;
 export type ScheduleCadence = 'daily' | 'weekly' | 'monthly' | 'seasonal' | 'annual' | 'once';
 
@@ -39,7 +40,7 @@ export interface KernelEntityRef {
   ownerOrganizationId: string | null;
   countryId: string | null;
   regionId: string | null;
-  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand' | 'regulation' | 'primary' | 'logistics' | 'quality' | 'finance' | 'packaging' | 'industrial';
+  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand' | 'regulation' | 'primary' | 'logistics' | 'quality' | 'finance' | 'packaging' | 'industrial' | 'hospitality';
 }
 
 export interface KernelProductSpecification {
@@ -81,7 +82,7 @@ export interface KernelGoodsEntry {
 
 export interface KernelTraceNode {
   id: string;
-  entityKind: 'harvest_lot' | 'ingredient_lot' | 'production_batch' | 'bulk_lot' | 'maturation_lot' | 'package_lot' | 'shipment' | 'sale';
+  entityKind: 'harvest_lot' | 'ingredient_lot' | 'production_batch' | 'bulk_lot' | 'maturation_lot' | 'package_lot' | 'shipment' | 'sale' | 'serve';
   entityId: string;
   parentNodeIds: string[];
   organizationId: string;
@@ -212,11 +213,12 @@ export interface KernelCreateInput {
   quality?: KernelQualitySnapshot;
   financials?: KernelFinancialSnapshot;
   packaging?: KernelPackagingSnapshot;
+  hospitality?: HospitalityState;
 }
 
 export function createEcosystemKernel(input: KernelCreateInput): EcosystemKernelState {
   const seed = hashSeed(input.seedText);
-  const entities = buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction, input.logistics, input.quality, input.financials, input.packaging);
+  const entities = buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction, input.logistics, input.quality, input.financials, input.packaging, input.hospitality);
   const productSpecifications = input.trade.products.map((product) => createProductSpecification(product, input.day));
   const traceability = mergeTraceability([], input.trade.inventory, input.primaryProduction?.rawLots ?? [], input.trade.batches ?? [], input.day, input.trade.industrial);
   return {
@@ -245,7 +247,7 @@ export function normalizeEcosystemKernel(kernel: EcosystemKernelState | undefine
   const traceability = mergeTraceability(kernel.traceability ?? [], input.trade.inventory, input.primaryProduction?.rawLots ?? [], input.trade.batches ?? [], input.day, input.trade.industrial);
   const normalized: EcosystemKernelState = {
     ...kernel,
-    entities: buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction, input.logistics, input.quality, input.financials, input.packaging),
+    entities: buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction, input.logistics, input.quality, input.financials, input.packaging, input.hospitality),
     productSpecifications: mergeProductSpecifications(kernel.productSpecifications ?? [], input.trade.products, input.day),
     moneyLedger: kernel.moneyLedger ?? [],
     goodsLedger: kernel.goodsLedger ?? [],
@@ -349,6 +351,39 @@ export function synchronizeKernelFromTrade(kernel: EcosystemKernelState, trade: 
     if (!next.traceability.some((node) => node.entityKind === 'sale' && node.entityId === sourceId)) next = addTraceNode(next, { entityKind: 'sale', entityId: sourceId, parentNodeIds, organizationId: shelf.supplierOrganizationId, createdDay: day });
   }
   return { ...next, traceability: mergeTraceability(next.traceability, trade.inventory, [], trade.batches ?? [], day, trade.industrial) };
+}
+
+
+export function synchronizeKernelFromHospitality(kernel: EcosystemKernelState, hospitality: HospitalityState): EcosystemKernelState {
+  let next = kernel;
+  const recorded = new Set(next.goodsLedger.map((entry) => entry.sourceId));
+  for (const report of hospitality.shiftReports) {
+    for (const item of report.items) {
+      const sourceId = `hospitality:${report.id}:${item.menuItemId}`;
+      if (item.orders <= 0 || recorded.has(sourceId)) continue;
+      const menuItem = hospitality.menuItems.find((candidate) => candidate.id === item.menuItemId);
+      const productId = menuItem?.ingredients.find((ingredient) => ingredient.productId)?.productId ?? 'hospitality-serve';
+      next = recordGoodsMovement(next, {
+        day: report.day,
+        commodityId: productId,
+        lotId: item.sourceLotIds[0] ?? null,
+        quantity: item.orders,
+        unit: 'serve',
+        fromOrganizationId: report.organizationId,
+        toOrganizationId: null,
+        fromAssetId: report.assetId,
+        toAssetId: null,
+        sourceType: 'hospitality_service',
+        sourceId,
+      });
+      recorded.add(sourceId);
+      const parentNodeIds = item.sourceLotIds.map((lotId) => next.traceability.find((node) => node.entityId === lotId)?.id).filter((id): id is string => Boolean(id));
+      if (!next.traceability.some((node) => node.entityKind === 'serve' && node.entityId === sourceId)) next = addTraceNode(next, {
+        entityKind: 'serve', entityId: sourceId, parentNodeIds, organizationId: report.organizationId, createdDay: report.day,
+      });
+    }
+  }
+  return next;
 }
 
 
@@ -672,7 +707,7 @@ export function nextRandom(state: number): { state: number; value: number } {
   return { state: next || 1, value: next / 0x1_0000_0000 };
 }
 
-function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: KernelAssetInput[], trade: KernelTradeSnapshot, demand?: KernelDemandSnapshot, regulation?: KernelRegulationSnapshot, primary?: KernelPrimarySnapshot, logistics?: KernelLogisticsSnapshot, quality?: KernelQualitySnapshot, financials?: KernelFinancialSnapshot, packaging?: KernelPackagingSnapshot): KernelEntityRef[] {
+function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: KernelAssetInput[], trade: KernelTradeSnapshot, demand?: KernelDemandSnapshot, regulation?: KernelRegulationSnapshot, primary?: KernelPrimarySnapshot, logistics?: KernelLogisticsSnapshot, quality?: KernelQualitySnapshot, financials?: KernelFinancialSnapshot, packaging?: KernelPackagingSnapshot, hospitality?: HospitalityState): KernelEntityRef[] {
   const entities: KernelEntityRef[] = [];
   for (const organization of organizations) entities.push({ id: organization.id, kind: 'organization', label: organization.name, ownerOrganizationId: organization.id, countryId: organization.countryId, regionId: organization.regionId, sourceModule: 'ecosystem' });
   for (const asset of assets) entities.push({ id: asset.id, kind: 'asset', label: asset.type, ownerOrganizationId: asset.ownerOrganizationId, countryId: asset.countryId, regionId: asset.regionId, sourceModule: 'ecosystem' });
@@ -712,6 +747,9 @@ function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: K
   for (const statement of financials?.statements ?? []) entities.push({ id: statement.id, kind: 'financial_statement', label: `Период до ${statement.periodEndDay}`, ownerOrganizationId: statement.organizationId, countryId: null, regionId: null, sourceModule: 'finance' });
   for (const job of packaging?.jobs ?? []) entities.push({ id: job.id, kind: 'packaging_job', label: `${job.componentId}:${job.status}`, ownerOrganizationId: null, countryId: null, regionId: null, sourceModule: 'packaging' });
   for (const item of packaging?.returns ?? []) entities.push({ id: item.id, kind: 'packaging_return', label: `${item.productId}:${item.status}`, ownerOrganizationId: null, countryId: null, regionId: null, sourceModule: 'packaging' });
+  for (const venue of hospitality?.venues ?? []) entities.push({ id: venue.id, kind: 'hospitality_venue', label: venue.concept, ownerOrganizationId: venue.operatorOrganizationId, countryId: null, regionId: null, sourceModule: 'hospitality' });
+  for (const item of hospitality?.menuItems ?? []) entities.push({ id: item.id, kind: 'menu_item', label: item.name, ownerOrganizationId: hospitality?.venues.find((venue) => venue.id === item.venueId)?.operatorOrganizationId ?? null, countryId: null, regionId: null, sourceModule: 'hospitality' });
+  for (const report of (hospitality?.shiftReports ?? []).slice(0, 240)) entities.push({ id: report.id, kind: 'shift_report', label: `${report.guests} гостей`, ownerOrganizationId: report.organizationId, countryId: null, regionId: null, sourceModule: 'hospitality' });
   return deduplicateEntities(entities);
 }
 

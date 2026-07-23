@@ -44,6 +44,11 @@ describe('observer simulation', () => {
     expect(result.report.industrialRunCount).toBeGreaterThan(0);
     expect(result.report.intermediateLotCount).toBeGreaterThan(0);
     expect(result.report.blendRecipeCount).toBeGreaterThan(0);
+    expect(result.report.hospitalityVenueCount).toBeGreaterThanOrEqual(9);
+    expect(result.report.hospitalityMenuItemCount).toBeGreaterThan(0);
+    expect(result.report.hospitalityShiftCount).toBeGreaterThan(0);
+    expect(result.report.hospitalityGuestCount).toBeGreaterThan(0);
+    expect(result.report.hospitalityRevenue).toBeGreaterThan(0);
     expect(result.report.violations).toEqual([]);
   }, 45_000);
 });

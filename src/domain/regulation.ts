@@ -1,6 +1,7 @@
 import { beverageCategories, type BeverageCategoryId } from '../data/beverageCatalog';
 import { getCountryRuleset, type CountryRuleset, type ExciseRule, type PermitType } from '../data/regulationCatalog';
 import type { OrganizationState, WorldAssetState } from './ecosystem';
+import { isHospitalityAssetType } from '../data/hospitalityCatalog';
 import type { TradeProductState, TradeState } from './trade';
 
 export type LicenseStatus = 'active' | 'pending' | 'suspended' | 'revoked' | 'expired';
@@ -389,7 +390,7 @@ function runScheduledInspections(state: RegulationState, organizations: Organiza
     const organizationAssets = assets.filter((asset) => asset.operatorOrganizationId === organization.id && asset.status === 'operating');
     const required = requiredPermitsForOrganization(organization);
     const missing = required.filter((permit) => !activePermit(regulation, organization.id, permit));
-    for (const asset of organizationAssets.filter((asset) => asset.type === 'bar' || asset.type === 'shop')) {
+    for (const asset of organizationAssets.filter((asset) => isHospitalityAssetType(asset.type) || asset.type === 'shop')) {
       if (!activePermit(regulation, organization.id, 'premises', asset.id)) missing.push('premises');
     }
     const overdue = regulation.obligations.filter((obligation) => obligation.organizationId === organization.id && obligation.status === 'overdue').reduce((sum, obligation) => sum + obligation.amount, 0);
@@ -495,7 +496,7 @@ function ensureRequiredLicenses(existing: OrganizationLicenseState[], organizati
     for (const permit of requiredPermitsForOrganization(organization)) add(organization, permit, null);
     const crossBorder = trade.contracts.some((contract) => contract.buyerOrganizationId === organization.id && organizations.find((item) => item.id === contract.sellerOrganizationId)?.countryId !== organization.countryId);
     if (crossBorder) add(organization, 'import_export', null);
-    for (const asset of assets.filter((item) => item.operatorOrganizationId === organization.id && (item.type === 'bar' || item.type === 'shop'))) add(organization, 'premises', asset.id);
+    for (const asset of assets.filter((item) => item.operatorOrganizationId === organization.id && (isHospitalityAssetType(item.type) || item.type === 'shop'))) add(organization, 'premises', asset.id);
   }
   return { items, nextNumber };
 }

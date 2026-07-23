@@ -1,5 +1,6 @@
 import type { EcosystemState, OrganizationState } from './ecosystem';
 import type { TradeContractState, TradeProductFamily, TradeProductState } from './trade';
+import { isHospitalityAssetType } from '../data/hospitalityCatalog';
 
 export type OrganizationStrategy =
   | 'survival'
@@ -506,7 +507,7 @@ function createShelfContract(state: EcosystemState, organization: OrganizationSt
   const product = strongestProduct(state, organization.id);
   if (!product) return { ecosystem: state, headline: '', detail: '', productId: null };
   const existingBuyerAssetIds = new Set(state.trade.contracts.filter((contract) => contract.sellerOrganizationId === organization.id && contract.commodityKind === 'product' && contract.status === 'active').map((contract) => contract.buyerAssetId));
-  const targetAsset = state.assets.find((asset) => (asset.type === 'bar' || asset.type === 'shop') && asset.operatorOrganizationId && !existingBuyerAssetIds.has(asset.id) && asset.operatorOrganizationId !== organization.id);
+  const targetAsset = state.assets.find((asset) => (isHospitalityAssetType(asset.type) || asset.type === 'shop') && asset.operatorOrganizationId && !existingBuyerAssetIds.has(asset.id) && asset.operatorOrganizationId !== organization.id);
   if (!targetAsset?.operatorOrganizationId) return { ecosystem: state, headline: '', detail: '', productId: null };
   const contract: TradeContractState = {
     id: `trade-contract-${state.trade.nextContractNumber}`,

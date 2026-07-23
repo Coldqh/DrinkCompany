@@ -18,6 +18,7 @@ import {
   type RetailVenueType,
 } from './retail';
 import type { MarketOutletState } from './market';
+import { isHospitalityAssetType } from '../data/hospitalityCatalog';
 import { suppliers } from '../data/supplyCatalog';
 import { advanceTradeDay, createTradeState, normalizeTradeState, type TradeState } from './trade';
 import { advanceDemandDay, createDemandState, normalizeDemandState, type DemandState } from './demand';
@@ -27,7 +28,13 @@ import { advanceLogisticsTransit, assignPendingShipments, createLogisticsSector,
 import { advanceQualityDay, createQualitySector, ensureQualitySector, type QualityState } from './quality';
 import { advanceFinancialDay, createFinancialSystem, ensureFinancialOrganizations, normalizeFinancialSystem, type FinancialSystemState } from './finance';
 import { advancePackagingDay, createPackagingSector, ensurePackagingSector, type PackagingState } from './packaging';
-import { advanceKernelDay, createEcosystemKernel, normalizeEcosystemKernel, synchronizeKernelFromFinance, synchronizeKernelFromLogistics, synchronizeKernelFromPrimary, synchronizeKernelFromQuality, synchronizeKernelFromRegulation, synchronizeKernelFromTrade, synchronizeKernelFromPackaging, type EcosystemKernelState } from './kernel';
+import { advanceKernelDay, createEcosystemKernel, normalizeEcosystemKernel, synchronizeKernelFromFinance, synchronizeKernelFromHospitality, synchronizeKernelFromLogistics, synchronizeKernelFromPrimary, synchronizeKernelFromQuality, synchronizeKernelFromRegulation, synchronizeKernelFromTrade, synchronizeKernelFromPackaging, type EcosystemKernelState } from './kernel';
+import {
+  advanceHospitalityDay,
+  createHospitalityFoundation,
+  ensureHospitalitySector,
+  type HospitalityState,
+} from './hospitality';
 import {
   advanceWorldIntelligence,
   createWorldIntelligenceState,
@@ -37,7 +44,7 @@ import {
 
 export type OrganizationKind = 'player' | 'producer' | 'hospitality' | 'retailer' | 'supplier' | 'packaging' | 'holding' | 'carrier' | 'distributor' | 'service' | 'financial';
 export type OrganizationStatus = 'active' | 'strained' | 'insolvent' | 'acquired';
-export type AssetType = 'production' | 'bar' | 'shop' | 'warehouse' | 'laboratory' | 'office' | 'vacant_commercial' | 'depot' | 'distribution_center' | 'field' | 'hop_yard' | 'orchard' | 'vineyard' | 'apiary' | 'botanical_farm' | 'malt_house' | 'hop_packer' | 'fruit_pool' | 'sugar_refinery' | 'culture_lab' | 'glass_plant' | 'can_plant' | 'keg_plant' | 'print_works' | 'closure_plant' | 'recycling_center';
+export type AssetType = 'production' | 'bar' | 'pub' | 'cocktail_bar' | 'nightclub' | 'restaurant' | 'hotel_bar' | 'wine_bar' | 'lounge' | 'music_venue' | 'shop' | 'warehouse' | 'laboratory' | 'office' | 'vacant_commercial' | 'depot' | 'distribution_center' | 'field' | 'hop_yard' | 'orchard' | 'vineyard' | 'apiary' | 'botanical_farm' | 'malt_house' | 'hop_packer' | 'fruit_pool' | 'sugar_refinery' | 'culture_lab' | 'glass_plant' | 'can_plant' | 'keg_plant' | 'print_works' | 'closure_plant' | 'recycling_center';
 export type AssetStatus = 'operating' | 'closed' | 'for_sale' | 'vacant';
 export type DealKind = 'acquisition' | 'lease' | 'investment' | 'takeover' | 'capital_injection' | 'asset_transfer' | 'npc_acquisition' | 'bankruptcy';
 export type SubsidiaryAutonomy = 'autonomous' | 'guided' | 'integrated';
@@ -140,6 +147,7 @@ export interface EcosystemState {
   quality: QualityState;
   financials: FinancialSystemState;
   packaging: PackagingState;
+  hospitality: HospitalityState;
 }
 
 export interface EcosystemAdvanceResult {
@@ -385,12 +393,14 @@ export function createEcosystemState(input: {
   const primarySector = createPrimarySector(input.day);
   const logisticsSector = createLogisticsSector(input.day);
   const packagingSector = createPackagingSector(input.day);
-  const baseOrganizations = [player, ...companyOrganizations, ...supplierOrganizations, ...outletOrganizations, ...landlordOrganizations, ...primarySector.organizations, ...logisticsSector.organizations, ...packagingSector.organizations];
-  const baseAssets = [playerAsset, ...producerAssets, ...supplierAssets, ...outletAssets, ...vacantAssets, ...primarySector.assets, ...logisticsSector.assets, ...packagingSector.assets];
+  const hospitalityFoundation = createHospitalityFoundation(input.day);
+  const baseOrganizations = [player, ...companyOrganizations, ...supplierOrganizations, ...outletOrganizations, ...landlordOrganizations, ...primarySector.organizations, ...logisticsSector.organizations, ...packagingSector.organizations, ...hospitalityFoundation.organizations];
+  const baseAssets = [playerAsset, ...producerAssets, ...supplierAssets, ...outletAssets, ...vacantAssets, ...primarySector.assets, ...logisticsSector.assets, ...packagingSector.assets, ...hospitalityFoundation.assets];
   const seededTrade = createTradeState(baseOrganizations, baseAssets, input.day);
   const packagingReady = ensurePackagingSector({ state: packagingSector.packaging, organizations: baseOrganizations, assets: baseAssets, trade: seededTrade, day: input.day });
-  const trade = packagingReady.trade;
-  const qualitySector = createQualitySector(packagingReady.organizations, packagingReady.assets, trade, input.day);
+  const hospitalityReady = ensureHospitalitySector({ state: undefined, organizations: packagingReady.organizations, assets: packagingReady.assets, trade: packagingReady.trade, day: input.day });
+  const trade = hospitalityReady.trade;
+  const qualitySector = createQualitySector(hospitalityReady.organizations, hospitalityReady.assets, trade, input.day);
   const financialOrganizations = ensureFinancialOrganizations(qualitySector.organizations, qualitySector.assets, input.day);
   const organizations = financialOrganizations.organizations;
   const assets = financialOrganizations.assets;
@@ -410,6 +420,7 @@ export function createEcosystemState(input: {
     quality: qualitySector.quality,
     financials,
     packaging: packagingReady.packaging,
+    hospitality: hospitalityReady.hospitality,
   });
   return {
     playerOrganizationId,
@@ -434,6 +445,7 @@ export function createEcosystemState(input: {
     quality: qualitySector.quality,
     financials,
     packaging: packagingReady.packaging,
+    hospitality: hospitalityReady.hospitality,
   };
 }
 
@@ -507,8 +519,9 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
     ? normalizeTradeState(state.trade)
     : createTradeState(logisticsSector.organizations, logisticsSector.assets, day);
   const packagingSector = ensurePackagingSector({ state: state.packaging, organizations: logisticsSector.organizations, assets: logisticsSector.assets, trade: baseTrade, day });
-  const trade = packagingSector.trade;
-  const qualitySector = ensureQualitySector({ state: state.quality, organizations: packagingSector.organizations, assets: packagingSector.assets, trade, day });
+  const hospitalitySector = ensureHospitalitySector({ state: state.hospitality, organizations: packagingSector.organizations, assets: packagingSector.assets, trade: packagingSector.trade, day });
+  const trade = hospitalitySector.trade;
+  const qualitySector = ensureQualitySector({ state: state.quality, organizations: hospitalitySector.organizations, assets: hospitalitySector.assets, trade, day });
   const financialOrganizations = ensureFinancialOrganizations(qualitySector.organizations, qualitySector.assets, day);
   const demand = normalizeDemandState(state.demand, day, `${state.playerOrganizationId}:${financialOrganizations.organizations.length}:${financialOrganizations.assets.length}`);
   const financials = normalizeFinancialSystem(state.financials, financialOrganizations.organizations, financialOrganizations.assets, day);
@@ -526,6 +539,7 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
     quality: qualitySector.quality,
     financials,
     packaging: packagingSector.packaging,
+    hospitality: hospitalitySector.hospitality,
   });
   return {
     ...state,
@@ -536,6 +550,7 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
     quality: qualitySector.quality,
     financials,
     packaging: packagingSector.packaging,
+    hospitality: hospitalitySector.hospitality,
     subsidiaries: state.subsidiaries ?? [],
     trade,
     demand,
@@ -546,9 +561,13 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
 }
 
 export function ecosystemPlayerDailyCost(state: EcosystemState): number {
-  return roundMoney(state.assets
+  const assetCost = state.assets
     .filter((asset) => asset.operatorOrganizationId === state.playerOrganizationId && asset.type !== 'production' && asset.status === 'operating')
-    .reduce((sum, asset) => sum + asset.dailyOperatingCost + (asset.ownerOrganizationId === state.playerOrganizationId ? 0 : asset.dailyRent), 0));
+    .reduce((sum, asset) => sum + asset.dailyOperatingCost + (asset.ownerOrganizationId === state.playerOrganizationId ? 0 : asset.dailyRent), 0);
+  const hospitalityPayroll = state.hospitality.venues
+    .filter((venue) => venue.operatorOrganizationId === state.playerOrganizationId && venue.status === 'open')
+    .reduce((sum, venue) => sum + venue.workforce.bartenders * 95 + venue.workforce.servers * 68 + venue.workforce.security * 82 + venue.workforce.managers * 120, 0);
+  return roundMoney(assetCost + hospitalityPayroll);
 }
 
 export function controlledShare(state: EcosystemState, organizationId: string): number {
@@ -572,7 +591,7 @@ export function isPlayerGroupAsset(state: EcosystemState, asset: WorldAssetState
 
 export function acquireAsset(state: EcosystemState, assetId: string, cash: number, day: number): { ecosystem: EcosystemState; cost: number } {
   const asset = getAsset(state, assetId);
-  if (asset.type !== 'bar' && asset.type !== 'shop' && asset.type !== 'warehouse' && asset.type !== 'laboratory') throw new Error('Этот объект нельзя приобрести напрямую');
+  if (!isHospitalityAssetType(asset.type) && asset.type !== 'shop' && asset.type !== 'warehouse' && asset.type !== 'laboratory') throw new Error('Этот объект нельзя приобрести напрямую');
   if (isPlayerControlledAsset(state, asset)) throw new Error('Объект уже находится под твоим контролем');
   if (isPlayerControlledOrganization(state, asset.ownerOrganizationId)) throw new Error('Объект уже находится внутри группы — используй внутреннюю передачу');
   if (asset.status !== 'for_sale' && asset.status !== 'operating') throw new Error('Владелец не рассматривает продажу');
@@ -810,6 +829,9 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   const tradeAdvance = advanceTradeDay(ecosystem.trade, ecosystem.organizations, ecosystem.assets, day, ecosystem.demand);
   ecosystem = { ...ecosystem, trade: tradeAdvance.trade, demand: tradeAdvance.demand, organizations: tradeAdvance.organizations };
   events.push(...tradeAdvance.events);
+  const hospitalityAdvance = advanceHospitalityDay(ecosystem.hospitality, ecosystem.trade, ecosystem.demand, ecosystem.organizations, ecosystem.assets, day);
+  ecosystem = { ...ecosystem, hospitality: hospitalityAdvance.hospitality, trade: hospitalityAdvance.trade, demand: hospitalityAdvance.demand, organizations: hospitalityAdvance.organizations };
+  events.push(...hospitalityAdvance.events);
   const qualityAdvance = advanceQualityDay(ecosystem.quality, ecosystem.trade, ecosystem.organizations, ecosystem.assets, day);
   ecosystem = { ...ecosystem, quality: qualityAdvance.quality, trade: qualityAdvance.trade, organizations: qualityAdvance.organizations };
   events.push(...qualityAdvance.events);
@@ -825,7 +847,7 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
 
   let organizations = ecosystem.organizations.map((organization) => {
     if (organization.id === ecosystem.playerOrganizationId) {
-      return { ...organization, dailyRevenue: retailAdvance.revenue, dailyCosts: playerCost };
+      return { ...organization, dailyRevenue: roundMoney(retailAdvance.revenue + hospitalityAdvance.playerRevenue), dailyCosts: playerCost };
     }
     if (organization.status === 'acquired') return organization;
     const operatingProfit = organization.dailyRevenue - organization.dailyCosts;
@@ -906,9 +928,11 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
     quality: ecosystem.quality,
     financials: ecosystem.financials,
     packaging: ecosystem.packaging,
+    hospitality: ecosystem.hospitality,
   });
   kernel = advanceKernelDay(kernel, day, ecosystem.trade);
   kernel = synchronizeKernelFromTrade(kernel, ecosystem.trade, day);
+  kernel = synchronizeKernelFromHospitality(kernel, ecosystem.hospitality);
   kernel = synchronizeKernelFromLogistics(kernel, ecosystem.logistics);
   kernel = synchronizeKernelFromPrimary(kernel, ecosystem.primaryProduction, day);
   kernel = synchronizeKernelFromRegulation(kernel, ecosystem.regulation);
@@ -921,8 +945,8 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   events.push(...intelligenceAdvance.events);
   return {
     ecosystem,
-    playerRevenue: roundMoney(retailAdvance.revenue + dividend),
-    playerUnitsSold: retailAdvance.unitsSold,
+    playerRevenue: roundMoney(retailAdvance.revenue + hospitalityAdvance.playerRevenue + dividend),
+    playerUnitsSold: retailAdvance.unitsSold + hospitalityAdvance.playerOrders,
     playerOperatingCost: playerCost,
     playerTaxPaid: regulationAdvance.playerTaxPaid,
     playerFinancialCashDelta: financialAdvance.playerCashDelta,
@@ -933,7 +957,7 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
 
 export function assetTypeLabel(type: AssetType): string {
   const labels: Record<AssetType, string> = {
-    production: 'Производство', bar: 'Бар', shop: 'Магазин', warehouse: 'Склад', laboratory: 'Лаборатория', office: 'Офис', vacant_commercial: 'Свободный объект',
+    production: 'Производство', bar: 'Бар', pub: 'Паб', cocktail_bar: 'Коктейльный бар', nightclub: 'Ночной клуб', restaurant: 'Ресторан', hotel_bar: 'Бар при отеле', wine_bar: 'Винный бар', lounge: 'Лаунж', music_venue: 'Музыкальная площадка', shop: 'Магазин', warehouse: 'Склад', laboratory: 'Лаборатория', office: 'Офис', vacant_commercial: 'Свободный объект',
     field: 'Поле', hop_yard: 'Хмельник', orchard: 'Сад', vineyard: 'Виноградник', apiary: 'Пасека', botanical_farm: 'Ботаническое хозяйство',
     malt_house: 'Солодовня', hop_packer: 'Хмелевой центр', fruit_pool: 'Фруктовый кооператив', sugar_refinery: 'Сахарный завод', culture_lab: 'Дрожжевая лаборатория', glass_plant: 'Стекольный завод', can_plant: 'Завод алюминиевой тары', keg_plant: 'Производство кегов', print_works: 'Типография упаковки', closure_plant: 'Производство пробок и крышек', recycling_center: 'Центр возврата и переработки', depot: 'Логистический терминал', distribution_center: 'Распределительный склад',
   };
@@ -960,7 +984,7 @@ function supplierAssetType(supplierId: string): AssetType {
 function stateToRetail(state: EcosystemState): RetailState {
   return {
     ...createRetailState(),
-    venues: state.assets.filter((asset) => asset.venue && asset.operatorOrganizationId === state.playerOrganizationId).map((asset) => ({ ...asset.venue!, id: asset.id })),
+    venues: state.assets.filter((asset) => asset.type === 'shop' && asset.venue && asset.operatorOrganizationId === state.playerOrganizationId).map((asset) => ({ ...asset.venue!, id: asset.id })),
     reports: state.retailReports,
     nextStockNumber: state.nextRetailStockNumber,
     nextReportNumber: state.nextRetailReportNumber,

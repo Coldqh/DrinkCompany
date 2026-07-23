@@ -295,9 +295,11 @@ function familyFallback(categoryId: BeverageCategoryId, weights: Partial<Record<
 }
 
 function channelForAsset(assetType: string): ConsumerChannel {
-  if (assetType === 'bar') return 'bar';
+  if (assetType === 'nightclub' || assetType === 'music_venue') return 'club';
+  if (assetType === 'restaurant') return 'restaurant';
   if (assetType === 'shop') return 'shop';
-  return assetType === 'restaurant' ? 'restaurant' : 'shop';
+  if (assetType === 'bar' || assetType === 'pub' || assetType === 'cocktail_bar' || assetType === 'hotel_bar' || assetType === 'wine_bar' || assetType === 'lounge') return 'bar';
+  return 'shop';
 }
 
 function dominantOccasion(segment: ConsumerSegmentState | undefined, day: RegionDemandDay, channel: ConsumerChannel): ConsumerOccasion {
