@@ -150,22 +150,45 @@ export function advanceHospitalityMarketDay(input: {
   organizations: OrganizationState[];
   day: number;
 }): HospitalityMarketAdvanceResult {
-  const normalized = normalizeHospitalityMarketState(input.market, input.demand, input.assets, input.venues, input.menuItems, input.organizations, input.day);
   const tasteProfiles = input.demand.regions.map((region) => createTasteProfile(region, input.day));
-  const previousByKey = new Map(normalized.cocktailTrends.map((trend) => [`${trend.regionId}:${trend.recipeId}`, trend]));
+  const profileByRegion = new Map(tasteProfiles.map((profile) => [profile.regionId, profile]));
+  const previousByKey = new Map(input.market.cocktailTrends.map((trend) => [`${trend.regionId}:${trend.recipeId}`, trend]));
+  const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
+  const venueById = new Map(input.venues.map((venue) => [venue.id, venue]));
+  const organizationById = new Map(input.organizations.map((organization) => [organization.id, organization]));
+  const venuesByRegion = new Map<string, HospitalityVenueState[]>();
+  const listedItemsByRegionRecipe = new Map<string, HospitalityMenuItemState[]>();
+
+  for (const venue of input.venues) {
+    const asset = assetById.get(venue.assetId);
+    if (!asset) continue;
+    const regionVenues = venuesByRegion.get(asset.regionId) ?? [];
+    regionVenues.push(venue);
+    venuesByRegion.set(asset.regionId, regionVenues);
+  }
+  for (const item of input.menuItems) {
+    if (!item.listed || !item.recipeId) continue;
+    const venue = venueById.get(item.venueId);
+    const asset = venue ? assetById.get(venue.assetId) : undefined;
+    if (!asset) continue;
+    const key = `${asset.regionId}:${item.recipeId}`;
+    const listedItems = listedItemsByRegionRecipe.get(key) ?? [];
+    listedItems.push(item);
+    listedItemsByRegionRecipe.set(key, listedItems);
+  }
+
   const nextTrends: HospitalityCocktailTrendState[] = [];
   const newSnapshots: HospitalityTrendSnapshotState[] = [];
   const eventCandidates: Array<{ title: string; detail: string; tone: 'market' | 'warning' | 'release'; weight: number }> = [];
 
   for (const region of input.demand.regions) {
-    const profile = tasteProfiles.find((item) => item.regionId === region.regionId);
+    const profile = profileByRegion.get(region.regionId);
     if (!profile) continue;
-    const regionVenues = input.venues.filter((venue) => input.assets.some((asset) => asset.id === venue.assetId && asset.regionId === region.regionId));
-    const venueIds = new Set(regionVenues.map((venue) => venue.id));
+    const regionVenues = venuesByRegion.get(region.regionId) ?? [];
     for (const recipe of cocktailRecipes) {
       const key = `${region.regionId}:${recipe.id}`;
       const previous = previousByKey.get(key) ?? createInitialTrend(region, recipe, profile, input.assets, input.venues, input.menuItems, input.organizations, input.day);
-      const listedItems = input.menuItems.filter((item) => venueIds.has(item.venueId) && item.recipeId === recipe.id && item.listed);
+      const listedItems = listedItemsByRegionRecipe.get(key) ?? [];
       const listedVenueIds = new Set(listedItems.map((item) => item.venueId));
       const saturationTarget = clamp(
         listedVenueIds.size / Math.max(1, regionVenues.length) * 1.2 + listedItems.reduce((sum, item) => sum + item.recentOrders, 0) / Math.max(30, regionVenues.length * 75),
@@ -176,7 +199,7 @@ export function advanceHospitalityMarketDay(input: {
       const taste = recipeTasteScore(recipe, profile);
       const season = seasonalRecipeMultiplier(recipe, region);
       const category = categorySignalMultiplier(recipe, region);
-      const promotion = promotionLift(recipe.id, region.regionId, listedItems, input.venues, input.assets, input.organizations);
+      const promotion = promotionLiftIndexed(listedItems, region.regionId, venueById, assetById, organizationById);
       const venueSuccess = venueSuccessLift(listedItems);
       const hype = deterministicHype(region.regionId, recipe.id, input.day, profile.exploration);
       const oversupplyPenalty = Math.max(0, saturation - .62) * .52;
@@ -220,10 +243,11 @@ export function advanceHospitalityMarketDay(input: {
     }
   }
 
+  const validHistory = input.market.trendHistory.filter((snapshot) => cocktailRecipe(snapshot.recipeId)).slice(0, 2400);
   return {
     tasteProfiles,
     cocktailTrends: nextTrends,
-    trendHistory: uniqueSnapshots([...newSnapshots, ...normalized.trendHistory]).slice(0, 2400),
+    trendHistory: uniqueSnapshots([...newSnapshots, ...validHistory]).slice(0, 2400),
     events: eventCandidates.sort((left, right) => right.weight - left.weight).slice(0, 3).map(({ title, detail, tone }) => ({ title, detail, tone })),
   };
 }
@@ -405,6 +429,27 @@ function promotionLift(
     const asset = venue ? assets.find((candidate) => candidate.id === venue.assetId) : undefined;
     if (!venue || asset?.regionId !== regionId) continue;
     const organization = organizations.find((candidate) => candidate.id === venue.operatorOrganizationId);
+    total += venue.marketingIntensity * (.55 + (organization?.reputation ?? 50) / 130);
+    count += 1;
+  }
+  return count ? round3(clamp(total / count * .16, 0, .28)) : 0;
+}
+
+function promotionLiftIndexed(
+  listedItems: HospitalityMenuItemState[],
+  regionId: string,
+  venueById: Map<string, HospitalityVenueState>,
+  assetById: Map<string, WorldAssetState>,
+  organizationById: Map<string, OrganizationState>,
+): number {
+  if (!listedItems.length) return 0;
+  let total = 0;
+  let count = 0;
+  for (const item of listedItems) {
+    const venue = venueById.get(item.venueId);
+    const asset = venue ? assetById.get(venue.assetId) : undefined;
+    if (!venue || asset?.regionId !== regionId) continue;
+    const organization = organizationById.get(venue.operatorOrganizationId);
     total += venue.marketingIntensity * (.55 + (organization?.reputation ?? 50) / 130);
     count += 1;
   }

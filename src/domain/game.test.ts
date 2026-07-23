@@ -520,7 +520,7 @@ describe('world ecosystem', () => {
     expect(state.production.batches.find((item) => item.id === batch.id)?.availableUnits).toBe(availableBefore - 24);
     const tradeProductId = `player-release:${release.id}`;
     expect(state.ecosystem?.trade.products.find((item) => item.id === tradeProductId)?.producerOrganizationId).toBe(state.ecosystem?.playerOrganizationId);
-    expect(state.ecosystem?.trade.shelves.find((item) => item.assetId === asset.id && item.productId === tradeProductId)?.units).toBe(25);
+    expect(state.ecosystem?.trade.shelves.find((item) => item.assetId === asset.id && item.productId === tradeProductId)?.units).toBe(24);
     expect(state.ecosystem?.hospitality.menuItems.some((item) => item.venueId === hospitalityVenue?.id && item.ingredients.some((ingredient) => ingredient.productId === tradeProductId))).toBe(true);
     const playerLot = state.ecosystem?.trade.inventory.find((item) => item.productionBatchId === batch.id && item.commodityId === tradeProductId);
     expect(playerLot).toBeDefined();

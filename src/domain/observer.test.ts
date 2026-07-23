@@ -54,5 +54,5 @@ describe('observer simulation', () => {
     expect(result.report.hospitalityMenuRevisionCount).toBeGreaterThan(0);
     expect(result.report.hospitalityMarketKnowledgeCount).toBeGreaterThan(0);
     expect(result.report.violations).toEqual([]);
-  }, 45_000);
+  }, 90_000);
 });

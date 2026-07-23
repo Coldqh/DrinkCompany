@@ -510,15 +510,26 @@ export function synchronizeKernelFromQuality(kernel: EcosystemKernelState, quali
 export function synchronizeKernelFromPackaging(kernel: EcosystemKernelState, packaging: PackagingState): EcosystemKernelState {
   const entities = [...kernel.entities];
   const byId = new Set(entities.map((entity) => entity.id));
-  for (const job of packaging.jobs) if (!byId.has(job.id)) entities.push({ id: job.id, kind: 'packaging_job', label: `${job.componentId}:${job.status}`, ownerOrganizationId: null, countryId: null, regionId: null, sourceModule: 'packaging' });
-  for (const item of packaging.returns) if (!byId.has(item.id)) entities.push({ id: item.id, kind: 'packaging_return', label: `${item.productId}:${item.status}`, ownerOrganizationId: null, countryId: null, regionId: null, sourceModule: 'packaging' });
+  for (const job of packaging.jobs) {
+    if (byId.has(job.id)) continue;
+    entities.push({ id: job.id, kind: 'packaging_job', label: `${job.componentId}:${job.status}`, ownerOrganizationId: null, countryId: null, regionId: null, sourceModule: 'packaging' });
+    byId.add(job.id);
+  }
+  for (const item of packaging.returns) {
+    if (byId.has(item.id)) continue;
+    entities.push({ id: item.id, kind: 'packaging_return', label: `${item.productId}:${item.status}`, ownerOrganizationId: null, countryId: null, regionId: null, sourceModule: 'packaging' });
+    byId.add(item.id);
+  }
   let next = { ...kernel, entities: deduplicateEntities(entities) };
+  const recordedMoney = new Set(next.moneyLedger.map((entry) => entry.sourceId));
+  const recordedGoods = new Set(next.goodsLedger.map((entry) => entry.sourceId));
   for (const operation of packaging.operations) {
     const sourceId = `packaging:${operation.id}`;
-    if (operation.amount > 0 && !next.moneyLedger.some((entry) => entry.sourceId === sourceId)) {
+    if (operation.amount > 0 && !recordedMoney.has(sourceId)) {
       next = recordMoneyTransfer(next, { day: operation.day, debitAccount: `org:${operation.organizationId}:expense`, creditAccount: 'system:packaging-environment', amount: operation.amount, currency: 'EUR', sourceType: 'packaging', sourceId, memo: operation.headline });
+      recordedMoney.add(sourceId);
     }
-    if (operation.quantity > 0 && operation.componentId && !next.goodsLedger.some((entry) => entry.sourceId === sourceId)) {
+    if (operation.quantity > 0 && operation.componentId && !recordedGoods.has(sourceId)) {
       next = recordGoodsMovement(next, {
         day: operation.day,
         commodityId: operation.componentId,
@@ -532,6 +543,7 @@ export function synchronizeKernelFromPackaging(kernel: EcosystemKernelState, pac
         sourceType: `packaging_${operation.kind}`,
         sourceId,
       });
+      recordedGoods.add(sourceId);
     }
   }
   return next;
@@ -607,7 +619,8 @@ export function synchronizeKernelFromPrimary(kernel: EcosystemKernelState, prima
   let next = kernel;
   const recordedGoods = new Set(next.goodsLedger.map((entry) => entry.sourceId));
   const recordedMoney = new Set(next.moneyLedger.map((entry) => entry.sourceId));
-  const traceByEntity = new Map(next.traceability.map((node) => [node.entityId, node.id]));
+  const traceByEntity = new Map(next.traceability.map((node) => [node.entityId, node]));
+  const pendingParentUpdates = new Map<string, string[]>();
 
   for (const operation of primary.operations) {
     if (operation.kind === 'harvest' && !recordedGoods.has(operation.id)) {
@@ -644,11 +657,13 @@ export function synchronizeKernelFromPrimary(kernel: EcosystemKernelState, prima
       }
     }
     if (operation.kind === 'processing') {
-      const parentNodeIds = operation.inputLotIds.map((lotId) => traceByEntity.get(lotId)).filter((id): id is string => Boolean(id));
+      const parentNodeIds = operation.inputLotIds
+        .map((lotId) => traceByEntity.get(lotId)?.id)
+        .filter((id): id is string => Boolean(id));
       for (const outputLotId of operation.outputLotIds) {
-        if (traceByEntity.has(outputLotId)) {
-          const nodeId = traceByEntity.get(outputLotId)!;
-          next = { ...next, traceability: next.traceability.map((node) => node.id === nodeId && node.parentNodeIds.length === 0 ? { ...node, parentNodeIds } : node) };
+        const existing = traceByEntity.get(outputLotId);
+        if (existing) {
+          if (existing.parentNodeIds.length === 0 && parentNodeIds.length > 0) pendingParentUpdates.set(existing.id, [...new Set(parentNodeIds)]);
           continue;
         }
         next = addTraceNode(next, {
@@ -656,9 +671,18 @@ export function synchronizeKernelFromPrimary(kernel: EcosystemKernelState, prima
           organizationId: operation.organizationId, createdDay: operation.day,
         });
         const created = next.traceability[next.traceability.length - 1];
-        if (created) traceByEntity.set(outputLotId, created.id);
+        if (created) traceByEntity.set(outputLotId, created);
       }
     }
+  }
+  if (pendingParentUpdates.size > 0) {
+    next = {
+      ...next,
+      traceability: next.traceability.map((node) => {
+        const parentNodeIds = pendingParentUpdates.get(node.id);
+        return parentNodeIds ? { ...node, parentNodeIds } : node;
+      }),
+    };
   }
   return next;
 }

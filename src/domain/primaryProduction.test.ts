@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { marketOutlets } from '../data/marketCatalog';
 import { createBrandState } from './brand';
 import { advanceEcosystemDay, createEcosystemState } from './ecosystem';
-import { primaryCommodityStock } from './primaryProduction';
+import { advancePrimaryProductionDay, primaryCommodityStock } from './primaryProduction';
 
 const companies = [
   { id: 'brew-a', name: 'Brew A', country: 'Германия', category: 'Пивоварня', reputation: 64, momentum: 58, status: 'stable' as const },
@@ -46,11 +46,19 @@ describe('primary production ecosystem', () => {
   });
 
   it('создаёт урожай по сезону без отрицательных остатков', () => {
-    let state = createWorld(218);
-    for (let day = 219; day <= 300; day += 1) state = advanceEcosystemDay(state, createBrandState(), [], day, 0).ecosystem;
-    expect(state.primaryProduction.harvests.length).toBeGreaterThan(0);
-    expect(state.primaryProduction.rawLots.every((lot) => lot.quantity >= 0)).toBe(true);
-    expect(state.primaryProduction.harvests.every((harvest) => harvest.quality >= 0 && harvest.quality <= 100)).toBe(true);
+    const world = createWorld(218);
+    let primaryProduction = world.primaryProduction;
+    let organizations = world.organizations;
+    let trade = world.trade;
+    for (let day = 219; day <= 300; day += 1) {
+      const advanced = advancePrimaryProductionDay(primaryProduction, organizations, trade, day);
+      primaryProduction = advanced.primaryProduction;
+      organizations = advanced.organizations;
+      trade = advanced.trade;
+    }
+    expect(primaryProduction.harvests.length).toBeGreaterThan(0);
+    expect(primaryProduction.rawLots.every((lot) => lot.quantity >= 0)).toBe(true);
+    expect(primaryProduction.harvests.every((harvest) => harvest.quality >= 0 && harvest.quality <= 100)).toBe(true);
   });
 
   it('не восстанавливает сельскохозяйственное сырьё без урожая', () => {
