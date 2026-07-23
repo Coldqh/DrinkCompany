@@ -41,7 +41,16 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   }
 
   return (
-    <main className="onboarding">
+    <div className="onboarding-shell">
+      <aside className="onboarding-showcase">
+        <img src="./art/bar.svg" alt="Премиальный бар с коктейльной стойкой" />
+        <div className="onboarding-showcase-copy">
+          <span>Drink Company</span>
+          <h1>Построй дом напитков, которому принадлежат производство, бренды и лучшие бары города.</h1>
+          <p>Один физический рынок. Реальные партии, поставки, полки, коктейли и деньги.</p>
+        </div>
+      </aside>
+      <main className="onboarding">
       <header className="brand-header">
         <div className="brand-mark">DC</div>
         <div>
@@ -151,7 +160,8 @@ export function Onboarding({ onComplete }: OnboardingProps) {
           <button className="primary" onClick={finish} disabled={!selectedProperty || companyName.trim().length < 2}>Открыть компанию</button>
         )}
       </footer>
-    </main>
+      </main>
+    </div>
   );
 }
 

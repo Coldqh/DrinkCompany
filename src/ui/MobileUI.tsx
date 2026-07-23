@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { Icon } from './Icon';
 
 export interface TabOption<T extends string> {
@@ -9,9 +9,9 @@ export interface TabOption<T extends string> {
 
 export function SubTabs<T extends string>({ value, options, onChange, label }: { value: T; options: TabOption<T>[]; onChange: (value: T) => void; label?: string }) {
   return (
-    <nav className="sub-tabs" aria-label={label ?? 'Подразделы'}>
+    <nav className={`sub-tabs ${options.length > 4 ? 'scrollable' : ''}`} aria-label={label ?? 'Подразделы'}>
       {options.map((option) => (
-        <button key={option.id} className={value === option.id ? 'active' : ''} onClick={() => onChange(option.id)}>
+        <button key={option.id} className={value === option.id ? 'active' : ''} onClick={() => onChange(option.id)} aria-current={value === option.id ? 'page' : undefined}>
           <span>{option.label}</span>
           {Boolean(option.badge) && <i>{option.badge}</i>}
         </button>
@@ -44,24 +44,51 @@ export function MiniStat({ label, value, note, tone = 'neutral' }: { label: stri
 }
 
 export function Modal({ title, kicker, children, onClose, footer, wide = false }: { title: string; kicker?: string; children: ReactNode; onClose: () => void; footer?: ReactNode; wide?: boolean }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const titleId = useId();
+
   useEffect(() => {
-    const previous = document.body.style.overflow;
+    const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.body.style.overflow = 'hidden';
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+
+    const dialog = dialogRef.current;
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []);
+    window.setTimeout(() => focusable()[0]?.focus(), 0);
+
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
     };
-    window.addEventListener('keydown', closeOnEscape);
+
+    window.addEventListener('keydown', handleKey);
     return () => {
-      document.body.style.overflow = previous;
-      window.removeEventListener('keydown', closeOnEscape);
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKey);
+      previousFocus?.focus();
     };
   }, [onClose]);
 
   return (
     <div className="modal-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className={`mobile-modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
+      <section ref={dialogRef} className={`mobile-modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header>
-          <div>{kicker && <span>{kicker}</span>}<h3>{title}</h3></div>
+          <div>{kicker && <span>{kicker}</span>}<h3 id={titleId}>{title}</h3></div>
           <button className="icon-button" onClick={onClose} aria-label="Закрыть"><Icon name="close" /></button>
         </header>
         <div className="modal-scroll">{children}</div>

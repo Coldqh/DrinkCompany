@@ -42,10 +42,10 @@ export function BrandHub({ state, onCreateBrand, onCreateRelease, onLaunchCampai
       <button className="button secondary" onClick={() => setBrandModal(true)}>Новый бренд</button>
       <button className="button primary" disabled={state.brand.brands.length === 0 || !state.production.batches.some((batch) => batch.status === 'packaged')} onClick={() => setReleaseModal(true)}>Новый товар</button>
     </div>
-    {state.brand.releases.length === 0 ? <div className="plain-panel"><EmptyState icon="bottle" title="Товаров пока нет" text="Создай бренд и свяжи его с разлитой партией." /></div> : <div className="simple-list plain-panel">{state.brand.releases.map((release) => {
+    {state.brand.releases.length === 0 ? <div className="plain-panel"><EmptyState icon="bottle" title="Товаров пока нет" text="Создай бренд и свяжи его с разлитой партией." /></div> : <div className="release-gallery">{state.brand.releases.map((release, index) => {
       const brand = state.brand.brands.find((item) => item.id === release.brandId);
       const batch = state.production.batches.find((item) => item.id === release.batchId);
-      return <button key={release.id} onClick={() => setCampaignRelease(release)}><span className="product-mark"><Icon name="bottle" /></span><span><strong>{release.name}</strong><small>{brand?.name} · {batch?.availableUnits ?? 0} бут. · узнаваемость {release.awareness}</small></span><b>{release.wholesalePrice.toFixed(2)}</b></button>;
+      return <button className={`release-card release-shape-${index % 3}`} key={release.id} onClick={() => setCampaignRelease(release)}><span className="release-card-art" aria-hidden="true"><i /><b>{brand?.name.slice(0, 2).toUpperCase() ?? 'DC'}</b></span><span className="release-card-copy"><small>{brand?.name ?? 'Без бренда'}</small><strong>{release.name}</strong><em>{batch?.availableUnits ?? 0} бут. · узнаваемость {release.awareness}</em></span><span className="release-card-value"><b>{release.wholesalePrice.toFixed(2)}</b><small>опт</small></span></button>;
     })}</div>}
     {state.brand.campaigns.some((campaign) => campaign.status === 'active') && <div className="quiet-banner"><Icon name="clock" /><span>{state.brand.campaigns.filter((campaign) => campaign.status === 'active').length} кампании сейчас в работе</span></div>}
 

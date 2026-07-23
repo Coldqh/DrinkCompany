@@ -1,7 +1,8 @@
 import type { GameState } from '../../domain/game';
 import { statusLabel } from '../../domain/production';
 import { Icon } from '../../ui/Icon';
-import { CompactHeader, EmptyState } from '../../ui/MobileUI';
+import { EmptyState } from '../../ui/MobileUI';
+import { EditorialVisual } from '../../ui/EditorialVisual';
 
 export type TodayTarget = 'production' | 'trade' | 'world' | 'company';
 
@@ -28,59 +29,64 @@ export function TodayView({ state, onOpen }: TodayViewProps) {
 
   return (
     <div className="screen-stack today-screen">
-      <CompactHeader
-        kicker={`День ${state.day}`}
-        title={decisions.length > 0 ? `${decisions.length} решения ждут тебя` : 'Сегодня всё под контролем'}
-        meta={decisions.length > 0 ? 'Сначала закрой важное. Остальное мир продолжит сам.' : 'Можно проверить производство или перейти к следующему дню.'}
+      <EditorialVisual
+        variant="cellar"
+        eyebrow={`День ${state.day} · операционная сводка`}
+        title={decisions.length > 0 ? `${decisions.length} решения требуют внимания` : 'Компания работает в заданном ритме'}
+        metric={formatMoney(state.finance.cash)}
+        note={`${cashDays > 90 ? '90+ дней' : `${cashDays} дней`} финансового запаса`}
+        action={<button className="button visual-button" onClick={() => onOpen(decisions[0]?.target ?? 'production')}>{decisions.length > 0 ? 'Открыть главное' : 'Проверить производство'}<Icon name="arrow" /></button>}
       />
 
-      <section className="decision-section">
-        <div className="section-heading"><span>Нужно решить</span><b>{decisions.length}</b></div>
-        {decisions.length === 0 ? (
-          <div className="plain-panel"><EmptyState icon="archive" title="Срочных решений нет" text="Производство, поставки и рынок продолжают работать автономно." /></div>
-        ) : (
-          <div className="action-list">
-            {decisions.slice(0, 5).map((item) => (
-              <button key={item.id} className={`action-row ${item.urgent ? 'urgent' : ''}`} onClick={() => onOpen(item.target)}>
-                <span className="action-icon"><Icon name={item.icon} /></span>
-                <span><strong>{item.title}</strong><small>{item.detail}</small></span>
-                <Icon name="arrow" />
+      <section className="today-metrics" aria-label="Ключевые показатели">
+        <article><span>Расходы в день</span><strong>{formatMoney(state.finance.dailyFixedCost)}</strong><small>операционная нагрузка</small></article>
+        <article><span>Активные процессы</span><strong>{activeBatches.length + shipments.length + freight.length}</strong><small>партии и поставки</small></article>
+        <article className={cashDays < 7 ? 'attention' : ''}><span>Запас денег</span><strong>{cashDays > 90 ? '90+' : cashDays}</strong><small>дней до кассового разрыва</small></article>
+      </section>
+
+      <div className="today-content-grid">
+        <section className="decision-section content-section">
+          <div className="section-heading"><span>Нужно решить</span><b>{decisions.length}</b></div>
+          {decisions.length === 0 ? (
+            <div className="plain-panel"><EmptyState icon="archive" title="Срочных решений нет" text="Производство, поставки и рынок продолжают работать автономно." /></div>
+          ) : (
+            <div className="action-list">
+              {decisions.slice(0, 6).map((item) => (
+                <button key={item.id} className={`action-row ${item.urgent ? 'urgent' : ''}`} onClick={() => onOpen(item.target)}>
+                  <span className="action-icon"><Icon name={item.icon} /></span>
+                  <span><strong>{item.title}</strong><small>{item.detail}</small></span>
+                  <Icon name="arrow" />
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="working-section content-section">
+          <div className="section-heading"><span>В работе</span><b>{activeBatches.length + shipments.length + freight.length}</b></div>
+          <div className="work-list plain-panel">
+            {activeBatches.slice(0, 3).map((batch) => (
+              <button key={batch.id} onClick={() => onOpen('production')}>
+                <span><strong>{batch.code} · {batch.recipe.name}</strong><small>{statusLabel(batch.status)} · готовность день {batch.readyDay}</small></span>
+                <b>{batch.progress}%</b>
               </button>
             ))}
+            {shipments.slice(0, 2).map((order) => (
+              <button key={order.id} onClick={() => onOpen('production')}>
+                <span><strong>{order.status === 'delayed' ? 'Поставка задержана' : 'Сырьё в пути'}</strong><small>Прибытие день {order.expectedDay}</small></span>
+                <b>{Math.max(0, order.expectedDay - state.day)} дн.</b>
+              </button>
+            ))}
+            {freight.slice(0, 2).map((shipment) => (
+              <button key={shipment.id} onClick={() => onOpen('world')}>
+                <span><strong>{shipment.status === 'customs_hold' ? 'Груз на таможне' : shipment.status === 'awaiting_transport' ? 'Груз ждёт перевозчика' : shipment.status === 'delayed' ? 'Перевозка задержана' : 'Товар в пути'}</strong><small>{shipment.quantity} ед. · {shipment.note}</small></span>
+                <b>{shipment.arrivalDay > state.day ? `${shipment.arrivalDay - state.day} дн.` : 'сегодня'}</b>
+              </button>
+            ))}
+            {activeBatches.length + shipments.length + freight.length === 0 && <p className="quiet-copy">Нет активных партий и поставок.</p>}
           </div>
-        )}
-      </section>
-
-      <section className="working-section">
-        <div className="section-heading"><span>В работе</span><b>{activeBatches.length + shipments.length + freight.length}</b></div>
-        <div className="work-list plain-panel">
-          {activeBatches.slice(0, 3).map((batch) => (
-            <button key={batch.id} onClick={() => onOpen('production')}>
-              <span><strong>{batch.code} · {batch.recipe.name}</strong><small>{statusLabel(batch.status)} · готовность день {batch.readyDay}</small></span>
-              <b>{batch.progress}%</b>
-            </button>
-          ))}
-          {shipments.slice(0, 2).map((order) => (
-            <button key={order.id} onClick={() => onOpen('production')}>
-              <span><strong>{order.status === 'delayed' ? 'Поставка задержана' : 'Сырьё в пути'}</strong><small>Прибытие день {order.expectedDay}</small></span>
-              <b>{Math.max(0, order.expectedDay - state.day)} дн.</b>
-            </button>
-          ))}
-          {freight.slice(0, 2).map((shipment) => (
-            <button key={shipment.id} onClick={() => onOpen('world')}>
-              <span><strong>{shipment.status === 'customs_hold' ? 'Груз на таможне' : shipment.status === 'awaiting_transport' ? 'Груз ждёт перевозчика' : shipment.status === 'delayed' ? 'Перевозка задержана' : 'Товар в пути'}</strong><small>{shipment.quantity} ед. · {shipment.note}</small></span>
-              <b>{shipment.arrivalDay > state.day ? `${shipment.arrivalDay - state.day} дн.` : 'сегодня'}</b>
-            </button>
-          ))}
-          {activeBatches.length + shipments.length + freight.length === 0 && <p className="quiet-copy">Нет активных партий и поставок.</p>}
-        </div>
-      </section>
-
-      <section className="money-strip plain-panel">
-        <div><span>Деньги</span><strong>{formatMoney(state.finance.cash)}</strong></div>
-        <div><span>Расходы в день</span><strong>{formatMoney(state.finance.dailyFixedCost)}</strong></div>
-        <div className={cashDays < 7 ? 'attention' : ''}><span>Запас</span><strong>{cashDays > 90 ? '90+ дней' : `${cashDays} дней`}</strong></div>
-      </section>
+        </section>
+      </div>
     </div>
   );
 }

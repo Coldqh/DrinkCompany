@@ -29,7 +29,8 @@ import { isHospitalityAssetType } from '../../data/hospitalityCatalog';
 import { industrialMaturationForProduct, industrialProductionSummary, industrialRunsForProduct, industrialStageLabel } from '../../domain/industrialProduction';
 import type { RetailVenueStatus, RetailVenueType } from '../../domain/retail';
 import { Icon } from '../../ui/Icon';
-import { CompactHeader, EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
+import { EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
+import { EditorialVisual } from '../../ui/EditorialVisual';
 
 type Section = 'city' | 'organizations' | 'flows' | 'group' | 'control' | 'chronicle' | 'deals';
 
@@ -50,6 +51,7 @@ interface WorldHubProps {
 
 export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onInject, onPolicy, onTransfer, onStock, onClean, onUpgrade, onStatus }: WorldHubProps) {
   const [section, setSection] = useState<Section>('city');
+  const [search, setSearch] = useState('');
   const [assetModal, setAssetModal] = useState<WorldAssetState | null>(null);
   const [organizationModal, setOrganizationModal] = useState<OrganizationState | null>(null);
   const [stockAsset, setStockAsset] = useState<WorldAssetState | null>(null);
@@ -71,6 +73,9 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
   const bottlenecks = ecosystem.trade.contracts.filter((contract) => contract.failures > 0).length
     + ecosystem.trade.batches.filter((batch) => batch.status === 'blocked').length
     + ecosystem.trade.shelves.filter((listing) => listing.units <= 0).length;
+  const query = search.trim().toLocaleLowerCase('ru-RU');
+  const visibleCommercialAssets = commercialAssets.filter((asset) => !query || `${asset.name} ${asset.city} ${assetTypeLabel(asset.type)}`.toLocaleLowerCase('ru-RU').includes(query));
+  const visibleOrganizations = organizations.filter((organization) => !query || `${organization.name} ${organization.ownerLabel} ${organizationKindLabel(organization.kind)}`.toLocaleLowerCase('ru-RU').includes(query));
 
   function act(result: ActionResult, close = true) {
     setFeedback(result);
@@ -87,21 +92,31 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
     <div className="world-hub compact-page">
       {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
 
-      <CompactHeader
-        kicker="Мир"
-        title="Объекты и организации"
-        meta={`${localDemand.headline} · ${localDemand.detail}`}
+      <EditorialVisual
+        variant="city"
+        eyebrow="Живая индустрия"
+        title="Бары, клубы, производители и капитал города"
+        metric={`${ecosystem.organizations.length} организаций`}
+        note={`${localDemand.headline} · ${ecosystem.assets.length} объектов · ${activeShipments} грузов в движении`}
+        action={<button className="button visual-button" onClick={() => setSection(saleAssets > 0 ? 'city' : 'flows')}>{saleAssets > 0 ? `${saleAssets} возможностей` : 'Открыть потоки'}<Icon name="arrow" /></button>}
       />
 
       <SubTabs value={section} onChange={setSection} options={[
-        { id: 'city', label: 'Карта', badge: saleAssets },
-        { id: 'organizations', label: 'Организации', badge: strainedOrganizations },
+        { id: 'city', label: 'Объекты', badge: saleAssets },
+        { id: 'organizations', label: 'Компании', badge: strainedOrganizations },
+        { id: 'flows', label: 'Потоки', badge: bottlenecks },
         { id: 'group', label: 'Группа', badge: subsidiaries.length + controlledAssets.length },
+        { id: 'chronicle', label: 'Хроника' },
       ]} />
+
+      {(section === 'city' || section === 'organizations') && <div className="content-toolbar world-toolbar">
+        <label className="search-field"><Icon name="search" /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={section === 'city' ? 'Объект, тип или город' : 'Компания, владелец или отрасль'} aria-label={section === 'city' ? 'Поиск объектов' : 'Поиск организаций'} /></label>
+        <span>{section === 'city' ? `${visibleCommercialAssets.length} объектов` : `${visibleOrganizations.length} компаний`}</span>
+      </div>}
 
       {section === 'city' && (
         <section className="ecosystem-list">
-          {commercialAssets
+          {visibleCommercialAssets
             .sort((a, b) => assetPriority(a) - assetPriority(b))
             .map((asset) => {
               const owner = ecosystem.organizations.find((organization) => organization.id === asset.ownerOrganizationId);
@@ -126,7 +141,7 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
 
       {section === 'organizations' && (
         <section className="ecosystem-list">
-          {organizations
+          {visibleOrganizations
             .sort((a, b) => organizationPriority(a) - organizationPriority(b))
             .map((organization) => {
               const share = controlledShare(ecosystem, organization.id);

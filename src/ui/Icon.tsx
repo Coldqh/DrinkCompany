@@ -1,6 +1,6 @@
 import type { ReactNode, SVGProps } from 'react';
 
-type IconName = 'home' | 'team' | 'factory' | 'batch' | 'market' | 'archive' | 'wallet' | 'clock' | 'spark' | 'kettle' | 'press' | 'tank' | 'bottle' | 'lab' | 'beer' | 'apple' | 'arrow' | 'check' | 'warning' | 'close' | 'store' | 'handshake' | 'sample' | 'contract' | 'map';
+type IconName = 'home' | 'team' | 'factory' | 'batch' | 'market' | 'archive' | 'wallet' | 'clock' | 'spark' | 'kettle' | 'press' | 'tank' | 'bottle' | 'lab' | 'beer' | 'apple' | 'arrow' | 'check' | 'warning' | 'close' | 'store' | 'handshake' | 'sample' | 'contract' | 'map' | 'search' | 'pulse' | 'building';
 
 const paths: Record<IconName, ReactNode> = {
   team: <><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20c0-4 2.5-6 6-6s6 2 6 6"/><path d="M14 15c3.7-.7 6 1.1 7 4"/></>,
@@ -28,6 +28,9 @@ const paths: Record<IconName, ReactNode> = {
   sample: <><path d="M9 3h6M10 3v5l-4 8a3 3 0 0 0 2.7 4h6.6a3 3 0 0 0 2.7-4l-4-8V3"/><path d="M8 15h8M10 12h4"/></>,
   contract: <><path d="M6 3h9l3 3v15H6Z"/><path d="M15 3v4h4M9 11h6M9 15h6M9 19h4"/></>,
   map: <><path d="M12 21s6-5 6-11a6 6 0 1 0-12 0c0 6 6 11 6 11Z"/><circle cx="12" cy="10" r="2"/></>,
+  search: <><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
+  pulse: <><path d="M3 12h4l2-6 4 12 2-6h6"/></>,
+  building: <><path d="M4 21V5l8-3 8 3v16"/><path d="M8 8h2M14 8h2M8 12h2M14 12h2M8 16h2M14 16h2M2 21h20"/></>,
 };
 
 export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) {

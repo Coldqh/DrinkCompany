@@ -15,7 +15,8 @@ import {
 import type { BatchState } from '../../domain/production';
 import type { BrandDraft, CampaignType, ReleaseDraft } from '../../domain/brand';
 import { Icon } from '../../ui/Icon';
-import { CompactHeader, EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
+import { EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
+import { EditorialVisual } from '../../ui/EditorialVisual';
 import { BrandHub } from '../brand/BrandHub';
 
 type TradeSection = 'products' | 'orders' | 'buyers';
@@ -37,6 +38,7 @@ export function MarketWorld({ state, onSendProposal, onAcceptOffer, onDeclineOff
   const packagedBatches = state.production.batches.filter((batch) => batch.status === 'packaged' && batch.availableUnits > 0);
   const [section, setSection] = useState<TradeSection>('products');
   const [filter, setFilter] = useState<OutletFilter>('local');
+  const [search, setSearch] = useState('');
   const [selectedBatchId, setSelectedBatchId] = useState(packagedBatches[0]?.id ?? '');
   const [dealOutlet, setDealOutlet] = useState<MarketOutletState | null>(null);
   const [proposalModal, setProposalModal] = useState<MarketProposal | null>(null);
@@ -54,6 +56,8 @@ export function MarketWorld({ state, onSendProposal, onAcceptOffer, onDeclineOff
   const offers = activeProposals.filter((proposal) => proposal.status === 'offer');
   const visibleOutlets = world.outlets.filter((outlet) => {
     if (outlet.controlledByPlayer) return false;
+    const query = search.trim().toLocaleLowerCase('ru-RU');
+    if (query && !`${outlet.name} ${outlet.city} ${channelLabel(outlet.channel)}`.toLocaleLowerCase('ru-RU').includes(query)) return false;
     if (filter === 'all') return true;
     if (filter === 'local') return outlet.regionId === world.regionId || outlet.countryId === world.countryId;
     return outlet.channel === filter;
@@ -82,7 +86,14 @@ export function MarketWorld({ state, onSendProposal, onAcceptOffer, onDeclineOff
 
   return <div className="screen-stack trade-screen">
     {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
-    <CompactHeader kicker="Торговля" title={offers.length > 0 ? `${offers.length} оффера ждут ответа` : 'Товары, заказы и покупатели'} meta={`${pendingOrders.length} повторных заказов · ${packagedBatches.reduce((sum, batch) => sum + batch.availableUnits, 0)} бутылок доступны`} />
+    <EditorialVisual
+      variant="bar"
+      eyebrow="Коммерция и hospitality"
+      title={offers.length > 0 ? `${offers.length} оффера ждут решения` : 'Выведи продукт на лучшие полки и барные карты'}
+      metric={`${packagedBatches.reduce((sum, batch) => sum + batch.availableUnits, 0)} бутылок`}
+      note={`${pendingOrders.length} повторных заказов · ${world.outlets.length} покупателей`}
+      action={<button className="button visual-button" onClick={() => setSection(packagedBatches.length > 0 ? 'buyers' : 'products')}>{packagedBatches.length > 0 ? 'Найти покупателя' : 'Создать товар'}<Icon name="arrow" /></button>}
+    />
     <SubTabs value={section} onChange={setSection} options={[
       { id: 'products', label: 'Товары', badge: state.brand.releases.length },
       { id: 'orders', label: 'Заказы', badge: pendingOrders.length + offers.length },
@@ -102,8 +113,11 @@ export function MarketWorld({ state, onSendProposal, onAcceptOffer, onDeclineOff
       {packagedBatches.length === 0 ? <div className="plain-panel"><EmptyState icon="bottle" title="Нет товара для предложения" text="Сначала разлей партию и создай коммерческий релиз." /></div> : <>
         <section className="product-picker plain-panel"><span>Что продаём</span><div>{packagedBatches.map((batch) => <button key={batch.id} className={selectedBatch?.id === batch.id ? 'active' : ''} onClick={() => setSelectedBatchId(batch.id)}><strong>{batch.recipe.name}</strong><small>{batch.availableUnits} бут.</small></button>)}</div></section>
         <DemandStrip signals={world.demandSignals.filter((signal) => signal.regionId === world.regionId)} />
-        <div className="filter-pills">{([['local','Рядом'],['all','Все'],['bar','Бары'],['store','Магазины'],['specialty','Спец']] as [OutletFilter,string][]).map(([id,label]) => <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}</button>)}</div>
-        <div className="simple-list plain-panel">{visibleOutlets.map((outlet) => <button key={outlet.id} onClick={() => openDeal(outlet)}><span className="product-mark"><Icon name={outlet.channel === 'bar' ? 'beer' : 'store'} /></span><span><strong>{outlet.name}</strong><small>{outlet.city} · отношения {outlet.relationship}/100</small></span><b>{outlet.preferredWholesale[0].toFixed(2)}–{outlet.preferredWholesale[1].toFixed(2)}</b></button>)}</div>
+        <div className="content-toolbar">
+          <label className="search-field"><Icon name="search" /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Бар, магазин или город" aria-label="Поиск покупателей" /></label>
+          <div className="filter-pills">{([['local','Рядом'],['all','Все'],['bar','Бары'],['store','Магазины'],['specialty','Спец']] as [OutletFilter,string][]).map(([id,label]) => <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}</button>)}</div>
+        </div>
+        {visibleOutlets.length > 0 ? <div className="buyer-grid">{visibleOutlets.map((outlet) => <button className="buyer-card" key={outlet.id} onClick={() => openDeal(outlet)}><span className="buyer-card-art"><Icon name={outlet.channel === 'bar' ? 'beer' : 'store'} /></span><span><small>{outlet.city} · {channelLabel(outlet.channel)}</small><strong>{outlet.name}</strong><em>Отношения {outlet.relationship}/100</em></span><b>{outlet.preferredWholesale[0].toFixed(2)}–{outlet.preferredWholesale[1].toFixed(2)}</b></button>)}</div> : <div className="plain-panel"><EmptyState icon="store" title="Покупатели не найдены" text="Измени запрос или сними фильтр канала." /></div>}
       </>}
     </>}
 

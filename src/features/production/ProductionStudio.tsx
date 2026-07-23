@@ -19,7 +19,8 @@ import { SupplyHub } from '../supply/SupplyHub';
 import { FacilityHub } from '../facility/FacilityHub';
 import { BatchBoard } from '../batches/BatchBoard';
 import { Icon } from '../../ui/Icon';
-import { CompactHeader, Modal } from '../../ui/MobileUI';
+import { Modal } from '../../ui/MobileUI';
+import { EditorialVisual } from '../../ui/EditorialVisual';
 
 interface ProductionStudioProps {
   state: GameState;
@@ -96,23 +97,33 @@ export function ProductionStudio(props: ProductionStudioProps) {
 
   return <div className="screen-stack production-screen">
     {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
-    <CompactHeader kicker="Производство" title={active.length > 0 ? `${active.length} партии в работе` : 'Производственный план пуст'} meta={`${Math.max(0, capacity - active.length)} свободных линий · ${packaged} бутылок на складе`} action={<button className="round-action" onClick={() => setWorkspace('facility')}><Icon name="factory" /></button>} />
+    <EditorialVisual
+      variant="production"
+      eyebrow="Производственная база"
+      title={active.length > 0 ? `${active.length} партии проходят цикл` : 'Линии готовы к новому запуску'}
+      metric={`${Math.max(0, capacity - active.length)} свободных линий`}
+      note={`${packaged} бутылок готовы к торговле`}
+      action={<button className="button visual-button" onClick={() => { setRecipeStep(1); setWorkspace('recipe'); }}>Новая партия<Icon name="arrow" /></button>}
+    />
 
-    <section className="production-flow plain-panel">
-      <button onClick={() => setWorkspace('supply')}><span>1</span><div><strong>Сырьё</strong><small>{state.supply.inventory.length} лотов · {state.supply.purchaseOrders.filter((order) => ['pending','delayed'].includes(order.status)).length} в пути</small></div><Icon name="arrow" /></button>
-      <button onClick={() => { setRecipeStep(1); setWorkspace('recipe'); }}><span>2</span><div><strong>Рецепт</strong><small>{state.production.recipes.length} сохранено · пиво и сидр</small></div><Icon name="arrow" /></button>
-      <button onClick={() => setWorkspace('batches')}><span>3</span><div><strong>Партия</strong><small>{active.length} в работе · {waiting.length} ждут решения</small></div><Icon name="arrow" /></button>
-      <button onClick={() => setWorkspace('batches')}><span>4</span><div><strong>Розлив</strong><small>{packaged} бутылок готовы к торговле</small></div><Icon name="arrow" /></button>
-    </section>
+    <div className="production-overview-grid">
+      <section className="production-flow plain-panel">
+        <header><span className="section-kicker">Производственный цикл</span><strong>От сырья до релиза</strong></header>
+        <button onClick={() => setWorkspace('supply')}><span>1</span><div><strong>Сырьё</strong><small>{state.supply.inventory.length} лотов · {state.supply.purchaseOrders.filter((order) => ['pending','delayed'].includes(order.status)).length} в пути</small></div><Icon name="arrow" /></button>
+        <button onClick={() => { setRecipeStep(1); setWorkspace('recipe'); }}><span>2</span><div><strong>Рецепт</strong><small>{state.production.recipes.length} сохранено · пиво и сидр</small></div><Icon name="arrow" /></button>
+        <button onClick={() => setWorkspace('batches')}><span>3</span><div><strong>Партия</strong><small>{active.length} в работе · {waiting.length} ждут решения</small></div><Icon name="arrow" /></button>
+        <button onClick={() => setWorkspace('batches')}><span>4</span><div><strong>Розлив</strong><small>{packaged} бутылок готовы к торговле</small></div><Icon name="arrow" /></button>
+      </section>
 
-    <button className="primary-command" onClick={() => { setRecipeStep(1); setWorkspace('recipe'); }}><span><small>Новое производство</small><strong>Создать и запустить партию</strong></span><Icon name="arrow" /></button>
+      <div className="production-side-stack">
+        <section className="plain-panel current-work">
+          <div className="section-heading"><span>Сейчас в работе</span><button onClick={() => setWorkspace('batches')}>Все партии</button></div>
+          {active.length > 0 ? active.slice(0, 4).map((batch) => <button key={batch.id} onClick={() => setWorkspace('batches')}><span><strong>{batch.code} · {batch.recipe.name}</strong><small>{statusLabel(batch.status)} · готовность день {batch.readyDay}</small></span><b>{batch.progress}%</b></button>) : <p className="quiet-copy">Активных партий нет. Линии не заняты.</p>}
+        </section>
 
-    {active.length > 0 && <section className="plain-panel current-work">
-      <div className="section-heading"><span>Сейчас в работе</span><button onClick={() => setWorkspace('batches')}>Все партии</button></div>
-      {active.slice(0, 3).map((batch) => <button key={batch.id} onClick={() => setWorkspace('batches')}><span><strong>{batch.code} · {batch.recipe.name}</strong><small>{statusLabel(batch.status)} · готовность день {batch.readyDay}</small></span><b>{batch.progress}%</b></button>)}
-    </section>}
-
-    <button className="secondary-command" onClick={() => setWorkspace('facility')}><Icon name="factory" /><span><strong>Объект и оборудование</strong><small>Чистота {Math.round(state.facility?.sanitation ?? 0)} · {state.production.equipmentIds.length} модулей</small></span><Icon name="arrow" /></button>
+        <button className="secondary-command" onClick={() => setWorkspace('facility')}><Icon name="factory" /><span><strong>Объект и оборудование</strong><small>Чистота {Math.round(state.facility?.sanitation ?? 0)} · {state.production.equipmentIds.length} модулей</small></span><Icon name="arrow" /></button>
+      </div>
+    </div>
 
     {workspace === 'recipe' && <Modal title="Новая партия" kicker={`Шаг ${recipeStep} из 3`} onClose={() => setWorkspace(null)} wide footer={<div className="wizard-footer">{recipeStep > 1 && <button className="button secondary" onClick={() => setRecipeStep((recipeStep - 1) as RecipeStep)}>Назад</button>}{recipeStep < 3 ? <button className="button primary" onClick={() => setRecipeStep((recipeStep + 1) as RecipeStep)}>Дальше</button> : <button className="button primary" disabled={!lineReady || supplyPlan.missing.length > 0 || state.finance.cash < processCost} onClick={launch}>Запустить · {formatMoney(supplyPlan.totalCost + processCost)}</button>}</div>}>
       <div className="wizard-steps"><i className={recipeStep >= 1 ? 'active' : ''} /><i className={recipeStep >= 2 ? 'active' : ''} /><i className={recipeStep >= 3 ? 'active' : ''} /></div>
