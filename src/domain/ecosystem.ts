@@ -25,7 +25,8 @@ import { advanceRegulationDay, createRegulationState, normalizeRegulationState, 
 import { advancePrimaryProductionDay, createPrimarySector, ensurePrimarySector, type PrimaryProductionState } from './primaryProduction';
 import { advanceLogisticsTransit, assignPendingShipments, createLogisticsSector, ensureLogisticsSector, type LogisticsState } from './logistics';
 import { advanceQualityDay, createQualitySector, ensureQualitySector, type QualityState } from './quality';
-import { advanceKernelDay, createEcosystemKernel, normalizeEcosystemKernel, synchronizeKernelFromLogistics, synchronizeKernelFromPrimary, synchronizeKernelFromQuality, synchronizeKernelFromRegulation, synchronizeKernelFromTrade, type EcosystemKernelState } from './kernel';
+import { advanceFinancialDay, createFinancialSystem, ensureFinancialOrganizations, normalizeFinancialSystem, type FinancialSystemState } from './finance';
+import { advanceKernelDay, createEcosystemKernel, normalizeEcosystemKernel, synchronizeKernelFromFinance, synchronizeKernelFromLogistics, synchronizeKernelFromPrimary, synchronizeKernelFromQuality, synchronizeKernelFromRegulation, synchronizeKernelFromTrade, type EcosystemKernelState } from './kernel';
 import {
   advanceWorldIntelligence,
   createWorldIntelligenceState,
@@ -33,7 +34,7 @@ import {
   type WorldIntelligenceState,
 } from './worldIntelligence';
 
-export type OrganizationKind = 'player' | 'producer' | 'hospitality' | 'retailer' | 'supplier' | 'holding' | 'carrier' | 'distributor' | 'service';
+export type OrganizationKind = 'player' | 'producer' | 'hospitality' | 'retailer' | 'supplier' | 'holding' | 'carrier' | 'distributor' | 'service' | 'financial';
 export type OrganizationStatus = 'active' | 'strained' | 'insolvent' | 'acquired';
 export type AssetType = 'production' | 'bar' | 'shop' | 'warehouse' | 'laboratory' | 'office' | 'vacant_commercial' | 'depot' | 'distribution_center' | 'field' | 'hop_yard' | 'orchard' | 'vineyard' | 'apiary' | 'botanical_farm' | 'malt_house' | 'hop_packer' | 'fruit_pool' | 'sugar_refinery' | 'culture_lab' | 'glass_plant';
 export type AssetStatus = 'operating' | 'closed' | 'for_sale' | 'vacant';
@@ -136,6 +137,7 @@ export interface EcosystemState {
   primaryProduction: PrimaryProductionState;
   logistics: LogisticsState;
   quality: QualityState;
+  financials: FinancialSystemState;
 }
 
 export interface EcosystemAdvanceResult {
@@ -144,6 +146,7 @@ export interface EcosystemAdvanceResult {
   playerUnitsSold: number;
   playerOperatingCost: number;
   playerTaxPaid: number;
+  playerFinancialCashDelta: number;
   reports: RetailDayReport[];
   events: { title: string; detail: string; tone: 'market' | 'warning' | 'release' }[];
 }
@@ -383,9 +386,11 @@ export function createEcosystemState(input: {
   const baseAssets = [playerAsset, ...producerAssets, ...supplierAssets, ...outletAssets, ...vacantAssets, ...primarySector.assets, ...logisticsSector.assets];
   const trade = createTradeState(baseOrganizations, baseAssets, input.day);
   const qualitySector = createQualitySector(baseOrganizations, baseAssets, trade, input.day);
-  const organizations = qualitySector.organizations;
-  const assets = qualitySector.assets;
+  const financialOrganizations = ensureFinancialOrganizations(qualitySector.organizations, qualitySector.assets, input.day);
+  const organizations = financialOrganizations.organizations;
+  const assets = financialOrganizations.assets;
   const demand = createDemandState(input.day, `${input.playerCompanyName}:${input.countryId}:${input.regionId}`);
+  const financials = createFinancialSystem(organizations, assets, input.day);
   const regulation = createRegulationState(organizations, assets, trade, input.day);
   const kernel = createEcosystemKernel({
     day: input.day,
@@ -398,6 +403,7 @@ export function createEcosystemState(input: {
     primaryProduction: primarySector.primaryProduction,
     logistics: logisticsSector.logistics,
     quality: qualitySector.quality,
+    financials,
   });
   return {
     playerOrganizationId,
@@ -420,6 +426,7 @@ export function createEcosystemState(input: {
     primaryProduction: primarySector.primaryProduction,
     logistics: logisticsSector.logistics,
     quality: qualitySector.quality,
+    financials,
   };
 }
 
@@ -493,33 +500,37 @@ export function normalizeEcosystemState(state: EcosystemState, day: number): Eco
     ? normalizeTradeState(state.trade)
     : createTradeState(logisticsSector.organizations, logisticsSector.assets, day);
   const qualitySector = ensureQualitySector({ state: state.quality, organizations: logisticsSector.organizations, assets: logisticsSector.assets, trade, day });
-  const demand = normalizeDemandState(state.demand, day, `${state.playerOrganizationId}:${qualitySector.organizations.length}:${qualitySector.assets.length}`);
-  const regulation = normalizeRegulationState(state.regulation, qualitySector.organizations, qualitySector.assets, trade, day);
+  const financialOrganizations = ensureFinancialOrganizations(qualitySector.organizations, qualitySector.assets, day);
+  const demand = normalizeDemandState(state.demand, day, `${state.playerOrganizationId}:${financialOrganizations.organizations.length}:${financialOrganizations.assets.length}`);
+  const financials = normalizeFinancialSystem(state.financials, financialOrganizations.organizations, financialOrganizations.assets, day);
+  const regulation = normalizeRegulationState(state.regulation, financialOrganizations.organizations, financialOrganizations.assets, trade, day);
   const kernel = normalizeEcosystemKernel(state.kernel, {
     day,
-    seedText: `${state.playerOrganizationId}:${qualitySector.organizations.length}:${qualitySector.assets.length}`,
-    organizations: qualitySector.organizations,
-    assets: qualitySector.assets,
+    seedText: `${state.playerOrganizationId}:${financialOrganizations.organizations.length}:${financialOrganizations.assets.length}`,
+    organizations: financialOrganizations.organizations,
+    assets: financialOrganizations.assets,
     trade,
     demand,
     regulation,
     primaryProduction: primarySector.primaryProduction,
     logistics: logisticsSector.logistics,
     quality: qualitySector.quality,
+    financials,
   });
   return {
     ...state,
-    organizations: qualitySector.organizations,
-    assets: qualitySector.assets,
+    organizations: financialOrganizations.organizations,
+    assets: financialOrganizations.assets,
     primaryProduction: primarySector.primaryProduction,
     logistics: logisticsSector.logistics,
     quality: qualitySector.quality,
+    financials,
     subsidiaries: state.subsidiaries ?? [],
     trade,
     demand,
     kernel,
     regulation,
-    intelligence: normalizeWorldIntelligenceState(state.intelligence, logisticsSector.organizations, day),
+    intelligence: normalizeWorldIntelligenceState(state.intelligence, financialOrganizations.organizations, day),
   };
 }
 
@@ -781,6 +792,7 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   const transitAdvance = advanceLogisticsTransit(ecosystem.logistics, ecosystem.trade, ecosystem.organizations, ecosystem.assets, day);
   ecosystem = { ...ecosystem, logistics: transitAdvance.logistics, trade: transitAdvance.trade, organizations: transitAdvance.organizations };
   events.push(...transitAdvance.events);
+  const tradeBeforeAdvance = ecosystem.trade;
   const tradeAdvance = advanceTradeDay(ecosystem.trade, ecosystem.organizations, ecosystem.assets, day, ecosystem.demand);
   ecosystem = { ...ecosystem, trade: tradeAdvance.trade, demand: tradeAdvance.demand, organizations: tradeAdvance.organizations };
   events.push(...tradeAdvance.events);
@@ -791,27 +803,23 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   ecosystem = { ...ecosystem, logistics: assignmentAdvance.logistics, trade: assignmentAdvance.trade, organizations: assignmentAdvance.organizations };
   events.push(...assignmentAdvance.events);
   const regulationAdvance = advanceRegulationDay(ecosystem.regulation, ecosystem.organizations, ecosystem.assets, ecosystem.trade, day, { organizationId: ecosystem.playerOrganizationId, cash: playerCash });
-  ecosystem = { ...ecosystem, regulation: regulationAdvance.regulation, organizations: regulationAdvance.organizations };
+  ecosystem = { ...ecosystem, regulation: regulationAdvance.regulation, organizations: regulationAdvance.organizations.map((organization) => organization.id === ecosystem.playerOrganizationId ? { ...organization, cash: playerCash } : organization) };
   events.push(...regulationAdvance.events);
+  const financialAdvance = advanceFinancialDay(ecosystem.financials, ecosystem.organizations, ecosystem.assets, tradeBeforeAdvance, ecosystem.trade, day, ecosystem.playerOrganizationId, regulationAdvance.regulation.payments);
+  ecosystem = { ...ecosystem, financials: financialAdvance.financials, organizations: financialAdvance.organizations, trade: financialAdvance.trade };
+  events.push(...financialAdvance.events);
 
   let organizations = ecosystem.organizations.map((organization) => {
     if (organization.id === ecosystem.playerOrganizationId) {
       return { ...organization, dailyRevenue: retailAdvance.revenue, dailyCosts: playerCost };
     }
     if (organization.status === 'acquired') return organization;
-    const revenue = organization.dailyRevenue;
-    const costs = organization.dailyCosts;
-    const cash = Math.max(-8_000, organization.cash);
-    const operatingProfit = revenue - costs;
-    const debt = cash < 0
-      ? roundMoney(organization.debt + Math.abs(cash) * .38)
-      : Math.max(0, roundMoney(organization.debt - Math.max(0, operatingProfit) * .08));
-    const status: OrganizationStatus = debt > organization.valuation * .82 || cash < -3_500
-      ? 'insolvent'
-      : debt > organization.valuation * .48 || cash < 4_000
-        ? 'strained'
-        : 'active';
-    return { ...organization, cash, debt, status, reputation: clamp(organization.reputation + (operatingProfit > 0 ? .08 : -.12), 10, 98) };
+    const operatingProfit = organization.dailyRevenue - organization.dailyCosts;
+    return {
+      ...organization,
+      cash: Math.max(-8_000, organization.cash),
+      reputation: clamp(organization.reputation + (operatingProfit > 0 ? .08 : -.12), 10, 98),
+    };
   });
 
   let assets = ecosystem.assets.map((asset, index) => {
@@ -882,6 +890,7 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
     primaryProduction: ecosystem.primaryProduction,
     logistics: ecosystem.logistics,
     quality: ecosystem.quality,
+    financials: ecosystem.financials,
   });
   kernel = advanceKernelDay(kernel, day, ecosystem.trade);
   kernel = synchronizeKernelFromTrade(kernel, ecosystem.trade, day);
@@ -889,6 +898,7 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
   kernel = synchronizeKernelFromPrimary(kernel, ecosystem.primaryProduction, day);
   kernel = synchronizeKernelFromRegulation(kernel, ecosystem.regulation);
   kernel = synchronizeKernelFromQuality(kernel, ecosystem.quality);
+  kernel = synchronizeKernelFromFinance(kernel, ecosystem.financials);
   ecosystem = { ...ecosystem, kernel };
   const intelligenceAdvance = advanceWorldIntelligence(ecosystem, day);
   ecosystem = intelligenceAdvance.ecosystem;
@@ -899,6 +909,7 @@ export function advanceEcosystemDay(state: EcosystemState, brand: BrandState, ba
     playerUnitsSold: retailAdvance.unitsSold,
     playerOperatingCost: playerCost,
     playerTaxPaid: regulationAdvance.playerTaxPaid,
+    playerFinancialCashDelta: financialAdvance.playerCashDelta,
     reports: retailAdvance.reports,
     events,
   };
@@ -915,7 +926,7 @@ export function assetTypeLabel(type: AssetType): string {
 
 export function organizationKindLabel(kind: OrganizationKind): string {
   const labels: Record<OrganizationKind, string> = {
-    player: 'Компания игрока', producer: 'Производитель', hospitality: 'Оператор заведений', retailer: 'Ритейлер', supplier: 'Поставщик', holding: 'Холдинг', carrier: 'Перевозчик', distributor: 'Дистрибьютор', service: 'Отраслевая служба',
+    player: 'Компания игрока', producer: 'Производитель', hospitality: 'Оператор заведений', retailer: 'Ритейлер', supplier: 'Поставщик', holding: 'Холдинг', carrier: 'Перевозчик', distributor: 'Дистрибьютор', service: 'Отраслевая служба', financial: 'Банк и финансовая организация',
   };
   return labels[kind];
 }

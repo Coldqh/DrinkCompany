@@ -51,7 +51,7 @@ describe('ecosystem kernel', () => {
   });
 
 
-  it('turns delivered trade into idempotent money and goods journals', () => {
+  it('records delivered goods but waits for a financial invoice before booking B2B money', () => {
     const trade = {
       ...input.trade,
       shipments: [{ id: 'shipment-a', sellerOrganizationId: 'org-a', buyerOrganizationId: 'org-b', buyerAssetId: null, commodityId: 'product-a', quantity: 24, unitPrice: 4, status: 'delivered', arrivalDay: 2 }],
@@ -61,7 +61,7 @@ describe('ecosystem kernel', () => {
     let kernel = createEcosystemKernel({ ...input, trade });
     kernel = synchronizeKernelFromTrade(kernel, trade, 2);
     kernel = synchronizeKernelFromTrade(kernel, trade, 2);
-    expect(kernel.moneyLedger).toHaveLength(1);
+    expect(kernel.moneyLedger).toHaveLength(0);
     expect(kernel.goodsLedger).toHaveLength(1);
   });
 

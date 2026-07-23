@@ -250,7 +250,7 @@ export interface TutorialState {
 }
 
 export interface GameState {
-  schemaVersion: 19;
+  schemaVersion: 20;
   phase: GamePhase;
   mode: GameMode;
   day: number;
@@ -359,7 +359,7 @@ export const STARTING_CASH: Record<GameMode, number> = {
 export function createInitialState(now = new Date()): GameState {
   const timestamp = now.toISOString();
   return {
-    schemaVersion: 19,
+    schemaVersion: 20,
     phase: 'onboarding',
     mode: 'standard',
     day: 1,
@@ -404,7 +404,7 @@ export function startCompany(selection: NewGameSelection, now = new Date()): Gam
     day: 1,
   });
   return {
-    schemaVersion: 19,
+    schemaVersion: 20,
     phase: 'operating',
     mode: selection.mode,
     day: 1,
@@ -1136,7 +1136,7 @@ export function advanceDay(state: GameState, now = new Date()): GameState {
   const dailyFixedCost = calculateDailyFixedCost(facility, teamAdvance.team, ecosystem);
   const directRevenue = ecosystemAdvance?.playerRevenue ?? 0;
   const playerTaxPaid = ecosystemAdvance?.playerTaxPaid ?? 0;
-  const nextCash = roundMoney(state.finance.cash - dailyFixedCost + directRevenue - playerTaxPaid);
+  const nextCash = roundMoney(state.finance.cash - dailyFixedCost + directRevenue - playerTaxPaid + (ecosystemAdvance?.playerFinancialCashDelta ?? 0));
   let world = state.world ? advanceWorld(state.world, batches, state.company.reputation, nextDay, brand, workforce.salesSkill) : null;
   if (world && ecosystem) world = syncWorldFromEcosystem(world, ecosystem);
   const externalEvents = [
@@ -1183,7 +1183,7 @@ export function migrateGameState(value: unknown): GameState {
   if (!value || typeof value !== 'object') return createInitialState();
   const raw = value as Record<string, unknown>;
   const version = typeof raw.schemaVersion === 'number' ? raw.schemaVersion : 0;
-  if (version < 1 || version > 19) return createInitialState();
+  if (version < 1 || version > 20) return createInitialState();
 
   const day = typeof raw.day === 'number' ? raw.day : 1;
   const phase: GamePhase = raw.phase === 'operating' ? 'operating' : 'onboarding';
@@ -1220,7 +1220,7 @@ export function migrateGameState(value: unknown): GameState {
   const timestamp = new Date().toISOString();
 
   return normalizeCurrentState({
-    schemaVersion: 19,
+    schemaVersion: 20,
     phase,
     mode,
     day,
@@ -1276,7 +1276,7 @@ function normalizeCurrentState(state: GameState): GameState {
   } : null;
   return {
     ...state,
-    schemaVersion: 19,
+    schemaVersion: 20,
     finance: {
       ...state.finance,
       salesRevenue: state.finance.salesRevenue ?? 0,

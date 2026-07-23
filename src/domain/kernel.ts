@@ -1,8 +1,9 @@
 import type { QualityState } from './quality';
+import type { FinancialSystemState } from './finance';
 import { beverageBlueprints, type BeverageCategoryId } from '../data/beverageCatalog';
 
-export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment' | 'authority' | 'license' | 'inspection' | 'tax_obligation' | 'primary_site' | 'harvest' | 'vehicle' | 'route' | 'freight_job' | 'quality_lab' | 'quality_sample' | 'quality_certificate' | 'quality_incident' | 'recall';
-export type LedgerAccount = `org:${string}:cash` | `org:${string}:revenue` | `org:${string}:expense` | `system:${string}`;
+export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment' | 'authority' | 'license' | 'inspection' | 'tax_obligation' | 'primary_site' | 'harvest' | 'vehicle' | 'route' | 'freight_job' | 'quality_lab' | 'quality_sample' | 'quality_certificate' | 'quality_incident' | 'recall' | 'bank_account' | 'invoice' | 'credit_facility' | 'loan' | 'insurance_policy' | 'financial_statement';
+export type LedgerAccount = `org:${string}:cash` | `org:${string}:revenue` | `org:${string}:expense` | `org:${string}:receivable` | `org:${string}:payable` | `org:${string}:inventory` | `org:${string}:debt` | `system:${string}`;
 export type ScheduleCadence = 'daily' | 'weekly' | 'monthly' | 'seasonal' | 'annual' | 'once';
 
 export interface KernelOrganizationInput { id: string; name: string; countryId: string; regionId: string; }
@@ -30,7 +31,7 @@ export interface KernelEntityRef {
   ownerOrganizationId: string | null;
   countryId: string | null;
   regionId: string | null;
-  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand' | 'regulation' | 'primary' | 'logistics' | 'quality';
+  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand' | 'regulation' | 'primary' | 'logistics' | 'quality' | 'finance';
 }
 
 export interface KernelProductSpecification {
@@ -174,6 +175,16 @@ export interface KernelQualitySnapshot {
   recalls: Array<{ id: string; responsibleOrganizationId: string; productId: string; status: string }>;
 }
 
+
+export interface KernelFinancialSnapshot {
+  accounts: Array<{ id: string; organizationId: string; bankId: string }>;
+  invoices: Array<{ id: string; sellerOrganizationId: string; buyerOrganizationId: string; status: string }>;
+  creditFacilities: Array<{ id: string; organizationId: string; bankId: string; status: string }>;
+  loans: Array<{ id: string; organizationId: string; bankId: string; status: string }>;
+  insurancePolicies: Array<{ id: string; organizationId: string; insurerBankId: string; kind: string }>;
+  statements: Array<{ id: string; organizationId: string; periodEndDay: number }>;
+}
+
 export interface KernelCreateInput {
   day: number;
   seedText: string;
@@ -185,11 +196,12 @@ export interface KernelCreateInput {
   primaryProduction?: KernelPrimarySnapshot;
   logistics?: KernelLogisticsSnapshot;
   quality?: KernelQualitySnapshot;
+  financials?: KernelFinancialSnapshot;
 }
 
 export function createEcosystemKernel(input: KernelCreateInput): EcosystemKernelState {
   const seed = hashSeed(input.seedText);
-  const entities = buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction, input.logistics, input.quality);
+  const entities = buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction, input.logistics, input.quality, input.financials);
   const productSpecifications = input.trade.products.map((product) => createProductSpecification(product, input.day));
   const traceability = mergeTraceability([], input.trade.inventory, input.primaryProduction?.rawLots ?? [], input.trade.batches ?? [], input.day);
   return {
@@ -251,13 +263,27 @@ export function synchronizeKernelFromTrade(kernel: EcosystemKernelState, trade: 
   const recordedMoneySources = new Set(next.moneyLedger.map((entry) => entry.sourceId));
   for (const operation of trade.operations ?? []) {
     if (operation.amount <= 0 || recordedMoneySources.has(operation.id)) continue;
-    const payer = operation.kind === 'sale' || operation.kind === 'delivery' ? operation.counterpartyOrganizationId : operation.organizationId;
-    const payee = operation.kind === 'sale' || operation.kind === 'delivery' ? operation.organizationId : operation.counterpartyOrganizationId;
-    if (!payer || !payee) continue;
+    // B2B deliveries are accrued and settled by FinancialSystemState invoices.
+    if (operation.kind === 'delivery' || operation.kind === 'purchase') continue;
+    if (operation.kind === 'sale') {
+      next = recordMoneyTransfer(next, {
+        day: operation.day,
+        debitAccount: 'system:consumer_spend',
+        creditAccount: `org:${operation.organizationId}:revenue`,
+        amount: operation.amount,
+        currency: 'EUR',
+        sourceType: 'consumer_sale',
+        sourceId: operation.id,
+        memo: operation.headline,
+      });
+      recordedMoneySources.add(operation.id);
+      continue;
+    }
+    if (!operation.counterpartyOrganizationId) continue;
     next = recordMoneyTransfer(next, {
       day: operation.day,
-      debitAccount: `org:${payer}:expense`,
-      creditAccount: `org:${payee}:revenue`,
+      debitAccount: `org:${operation.organizationId}:expense`,
+      creditAccount: `org:${operation.counterpartyOrganizationId}:revenue`,
       amount: operation.amount,
       currency: 'EUR',
       sourceType: operation.kind,
@@ -398,6 +424,46 @@ export function synchronizeKernelFromQuality(kernel: EcosystemKernelState, quali
         sourceId: operation.id,
       });
       goodsSources.add(operation.id);
+    }
+  }
+  return next;
+}
+
+
+export function synchronizeKernelFromFinance(kernel: EcosystemKernelState, financials: FinancialSystemState): EcosystemKernelState {
+  let next = kernel;
+  const recorded = new Set(next.moneyLedger.map((entry) => entry.sourceId));
+  const add = (sourceId: string, day: number, debitAccount: LedgerAccount, creditAccount: LedgerAccount, amount: number, sourceType: string, memo: string) => {
+    if (amount <= 0 || recorded.has(sourceId)) return;
+    next = recordMoneyTransfer(next, { day, debitAccount, creditAccount, amount, currency: 'EUR', sourceType, sourceId, memo });
+    recorded.add(sourceId);
+  };
+  for (const operation of financials.operations) {
+    if (operation.amount <= 0) continue;
+    if (operation.kind === 'invoice_issued' && operation.invoiceId && operation.counterpartyOrganizationId) {
+      add(`${operation.id}:seller`, operation.day, `org:${operation.organizationId}:receivable`, `org:${operation.organizationId}:revenue`, operation.amount, 'invoice_accrual', operation.memo);
+      add(`${operation.id}:buyer`, operation.day, `org:${operation.counterpartyOrganizationId}:inventory`, `org:${operation.counterpartyOrganizationId}:payable`, operation.amount, 'invoice_accrual', operation.memo);
+      continue;
+    }
+    if (operation.kind === 'payment' && operation.invoiceId && operation.counterpartyOrganizationId) {
+      add(`${operation.id}:buyer`, operation.day, `org:${operation.organizationId}:payable`, `org:${operation.organizationId}:cash`, operation.amount, 'invoice_payment', operation.memo);
+      add(`${operation.id}:seller`, operation.day, `org:${operation.counterpartyOrganizationId}:cash`, `org:${operation.counterpartyOrganizationId}:receivable`, operation.amount, 'invoice_payment', operation.memo);
+      continue;
+    }
+    if (operation.kind === 'credit_draw') {
+      add(operation.id, operation.day, `org:${operation.organizationId}:cash`, `org:${operation.organizationId}:debt`, operation.amount, 'credit_draw', operation.memo);
+      continue;
+    }
+    if (operation.kind === 'credit_repayment') {
+      add(operation.id, operation.day, `org:${operation.organizationId}:debt`, `org:${operation.organizationId}:cash`, operation.amount, 'credit_repayment', operation.memo);
+      continue;
+    }
+    if (operation.kind === 'default') {
+      add(operation.id, operation.day, `org:${operation.organizationId}:expense`, `org:${operation.organizationId}:receivable`, operation.amount, 'bad_debt_writeoff', operation.memo);
+      continue;
+    }
+    if (operation.kind === 'interest' || operation.kind === 'insurance_premium') {
+      add(operation.id, operation.day, `org:${operation.organizationId}:expense`, operation.counterpartyOrganizationId ? `org:${operation.counterpartyOrganizationId}:revenue` : 'system:finance', operation.amount, `finance_${operation.kind}`, operation.memo);
     }
   }
   return next;
@@ -559,7 +625,7 @@ export function nextRandom(state: number): { state: number; value: number } {
   return { state: next || 1, value: next / 0x1_0000_0000 };
 }
 
-function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: KernelAssetInput[], trade: KernelTradeSnapshot, demand?: KernelDemandSnapshot, regulation?: KernelRegulationSnapshot, primary?: KernelPrimarySnapshot, logistics?: KernelLogisticsSnapshot, quality?: KernelQualitySnapshot): KernelEntityRef[] {
+function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: KernelAssetInput[], trade: KernelTradeSnapshot, demand?: KernelDemandSnapshot, regulation?: KernelRegulationSnapshot, primary?: KernelPrimarySnapshot, logistics?: KernelLogisticsSnapshot, quality?: KernelQualitySnapshot, financials?: KernelFinancialSnapshot): KernelEntityRef[] {
   const entities: KernelEntityRef[] = [];
   for (const organization of organizations) entities.push({ id: organization.id, kind: 'organization', label: organization.name, ownerOrganizationId: organization.id, countryId: organization.countryId, regionId: organization.regionId, sourceModule: 'ecosystem' });
   for (const asset of assets) entities.push({ id: asset.id, kind: 'asset', label: asset.type, ownerOrganizationId: asset.ownerOrganizationId, countryId: asset.countryId, regionId: asset.regionId, sourceModule: 'ecosystem' });
@@ -585,6 +651,13 @@ function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: K
   for (const certificate of quality?.certificates ?? []) entities.push({ id: certificate.id, kind: 'quality_certificate', label: certificate.status, ownerOrganizationId: certificate.organizationId, countryId: null, regionId: null, sourceModule: 'quality' });
   for (const incident of quality?.incidents ?? []) entities.push({ id: incident.id, kind: 'quality_incident', label: incident.status, ownerOrganizationId: incident.organizationId, countryId: null, regionId: null, sourceModule: 'quality' });
   for (const recall of quality?.recalls ?? []) entities.push({ id: recall.id, kind: 'recall', label: recall.status, ownerOrganizationId: recall.responsibleOrganizationId, countryId: null, regionId: null, sourceModule: 'quality' });
+
+  for (const account of financials?.accounts ?? []) entities.push({ id: account.id, kind: 'bank_account', label: account.bankId, ownerOrganizationId: account.organizationId, countryId: null, regionId: null, sourceModule: 'finance' });
+  for (const invoice of financials?.invoices ?? []) entities.push({ id: invoice.id, kind: 'invoice', label: invoice.status, ownerOrganizationId: invoice.sellerOrganizationId, countryId: null, regionId: null, sourceModule: 'finance' });
+  for (const facility of financials?.creditFacilities ?? []) entities.push({ id: facility.id, kind: 'credit_facility', label: facility.status, ownerOrganizationId: facility.organizationId, countryId: null, regionId: null, sourceModule: 'finance' });
+  for (const loan of financials?.loans ?? []) entities.push({ id: loan.id, kind: 'loan', label: loan.status, ownerOrganizationId: loan.organizationId, countryId: null, regionId: null, sourceModule: 'finance' });
+  for (const policy of financials?.insurancePolicies ?? []) entities.push({ id: policy.id, kind: 'insurance_policy', label: policy.kind, ownerOrganizationId: policy.organizationId, countryId: null, regionId: null, sourceModule: 'finance' });
+  for (const statement of financials?.statements ?? []) entities.push({ id: statement.id, kind: 'financial_statement', label: `Период до ${statement.periodEndDay}`, ownerOrganizationId: statement.organizationId, countryId: null, regionId: null, sourceModule: 'finance' });
   return deduplicateEntities(entities);
 }
 

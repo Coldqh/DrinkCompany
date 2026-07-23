@@ -116,7 +116,26 @@ describe('ecosystem', () => {
     if (!strained) throw new Error('strained organization missing');
     const forced = {
       ...state,
-      organizations: state.organizations.map((organization) => organization.id === strained.id ? { ...organization, cash: -7_000, debt: organization.valuation } : organization),
+      organizations: state.organizations.map((organization) => organization.id === strained.id ? { ...organization, cash: -7_000 } : organization),
+      financials: {
+        ...state.financials,
+        creditFacilities: state.financials.creditFacilities.map((facility) => facility.organizationId === strained.id ? { ...facility, drawn: facility.limit, status: 'frozen' as const } : facility),
+        loans: [
+          ...state.financials.loans.filter((loan) => loan.organizationId !== strained.id),
+          {
+            id: `loan-test-${strained.id}`,
+            organizationId: strained.id,
+            bankId: state.financials.banks[0]!.id,
+            principal: strained.valuation,
+            outstanding: strained.valuation,
+            annualRate: .08,
+            monthlyInstallment: 1_000,
+            nextPaymentDay: 30,
+            collateralAssetIds: [...strained.assetIds],
+            status: 'active' as const,
+          },
+        ],
+      },
     };
     const advanced = advanceEcosystemDay(forced, createBrandState(), [], 2, 0);
     expect(advanced.ecosystem.organizations.find((organization) => organization.id === strained.id)?.status).toBe('insolvent');

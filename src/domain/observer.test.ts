@@ -34,6 +34,9 @@ describe('observer simulation', () => {
     expect(result.report.freightJobCount).toBeGreaterThan(0);
     expect(result.report.deliveredFreightJobs).toBeGreaterThan(0);
     expect(result.report.logisticsOperations).toBeGreaterThan(0);
+    expect(result.report.invoiceCount).toBeGreaterThan(0);
+    expect(result.report.financialStatementCount).toBeGreaterThan(0);
+    expect(result.report.creditDrawn).toBeGreaterThanOrEqual(0);
     expect(result.report.violations).toEqual([]);
   }, 30_000);
 });

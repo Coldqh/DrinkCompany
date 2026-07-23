@@ -1,6 +1,7 @@
 import { advanceDay, type GameState } from './game';
 import { auditKernel } from './kernel';
 import { auditQuality } from './quality';
+import { auditFinancialSystem } from './finance';
 
 export interface ObserverSimulationReport {
   daysSimulated: number;
@@ -36,6 +37,11 @@ export interface ObserverSimulationReport {
   qualityCertificates: number;
   qualityIncidents: number;
   recalledUnits: number;
+  invoiceCount: number;
+  overdueInvoiceCount: number;
+  defaultedInvoiceCount: number;
+  financialStatementCount: number;
+  creditDrawn: number;
   finalPlayerCash: number;
   violations: string[];
 }
@@ -110,6 +116,11 @@ export function runObserverSimulation(initial: GameState, days: number, options:
         qualityCertificates: 0,
         qualityIncidents: 0,
         recalledUnits: 0,
+        invoiceCount: 0,
+        overdueInvoiceCount: 0,
+        defaultedInvoiceCount: 0,
+        financialStatementCount: 0,
+        creditDrawn: 0,
         finalPlayerCash: state.finance.cash,
         violations: state.phase === 'operating' ? ['Operating state has no ecosystem'] : [],
       },
@@ -139,6 +150,7 @@ export function runObserverSimulation(initial: GameState, days: number, options:
   if (ecosystem.logistics.fleet.some((vehicle) => vehicle.capacity <= 0 || vehicle.condition < 0 || vehicle.condition > 100)) violations.push('Некорректное состояние автопарка');
   if (ecosystem.logistics.jobs.some((job) => job.status === 'delivered' && job.deliveredDay === null)) violations.push('Доставленный рейс без даты завершения');
   violations.push(...auditQuality(ecosystem.quality, ecosystem.trade));
+  violations.push(...auditFinancialSystem(ecosystem.financials, ecosystem.organizations));
   const licenseIds = new Set(ecosystem.regulation.licenses.map((license) => license.id));
   if (licenseIds.size !== ecosystem.regulation.licenses.length) violations.push('Дублирующиеся регуляторные лицензии');
   return {
@@ -177,6 +189,11 @@ export function runObserverSimulation(initial: GameState, days: number, options:
       qualityCertificates: ecosystem.quality.certificates.length,
       qualityIncidents: ecosystem.quality.incidents.length,
       recalledUnits: ecosystem.quality.recalls.reduce((sum, recall) => sum + recall.destroyedUnits, 0),
+      invoiceCount: ecosystem.financials.invoices.length,
+      overdueInvoiceCount: ecosystem.financials.invoices.filter((invoice) => invoice.status === 'overdue').length,
+      defaultedInvoiceCount: ecosystem.financials.invoices.filter((invoice) => invoice.status === 'defaulted').length,
+      financialStatementCount: ecosystem.financials.statements.length,
+      creditDrawn: ecosystem.financials.creditFacilities.reduce((sum, facility) => sum + facility.drawn, 0),
       finalPlayerCash: state.finance.cash,
       violations,
     },
