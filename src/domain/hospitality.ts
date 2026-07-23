@@ -1,4 +1,16 @@
-import { cocktailRecipes, type BeverageCategoryId, type ServeMethod } from '../data/beverageCatalog';
+import type { BeverageCategoryId } from '../data/beverageCatalog';
+import {
+  cocktailPantryCatalog,
+  cocktailRecipe,
+  cocktailRecipes,
+  pantryDefinition,
+  type CocktailIce,
+  type CocktailIngredientDefinition,
+  type CocktailIngredientSelector,
+  type CocktailIngredientUnit,
+  type CocktailRecipeDefinition,
+  type ServeMethod,
+} from '../data/cocktailCatalog';
 import {
   hospitalityConcept,
   hospitalityConceptForAssetType,
@@ -31,7 +43,8 @@ export interface HospitalityMenuIngredientState {
   productId: string | null;
   categoryId: BeverageCategoryId | null;
   pantryTag: string | null;
-  amountMl: number;
+  amount: number;
+  unit: CocktailIngredientUnit;
 }
 
 export interface HospitalityMenuItemState {
@@ -39,11 +52,18 @@ export interface HospitalityMenuItemState {
   venueId: string;
   name: string;
   kind: HospitalityMenuKind;
+  recipeId: string | null;
   method: ServeMethod | null;
   glassware: string;
+  ice: CocktailIce | null;
+  garnish: string[];
+  preparationSeconds: number;
+  complexity: number;
   ingredients: HospitalityMenuIngredientState[];
+  materialCost: number;
   salePrice: number;
   active: boolean;
+  availabilityReason: string | null;
   totalSold: number;
   totalRevenue: number;
   createdDay: number;
@@ -60,6 +80,18 @@ export interface HospitalityOpenContainerState {
   initialMl: number;
   remainingMl: number;
   costBasis: number;
+}
+
+export interface HospitalityPantryLotState {
+  id: string;
+  venueId: string;
+  ingredientTag: string;
+  quantity: number;
+  unit: CocktailIngredientUnit;
+  unitCost: number;
+  receivedDay: number;
+  expiresDay: number;
+  source: 'opening_stock' | 'restock';
 }
 
 export interface HospitalityVenueState {
@@ -89,7 +121,9 @@ export interface HospitalityShiftItemState {
   orders: number;
   revenue: number;
   consumedMl: number;
+  pantryConsumed: number;
   sourceLotIds: string[];
+  quality: number;
 }
 
 export interface HospitalityShiftReportState {
@@ -106,6 +140,8 @@ export interface HospitalityShiftReportState {
   costOfGoods: number;
   wasteMl: number;
   averageWaitMinutes: number;
+  serviceUtilization: number;
+  averageServeQuality: number;
   satisfaction: number;
   incidentIds: string[];
   items: HospitalityShiftItemState[];
@@ -123,14 +159,16 @@ export interface HospitalityIncidentState {
 }
 
 export interface HospitalityState {
-  hospitalityVersion: 1;
+  hospitalityVersion: 2;
   venues: HospitalityVenueState[];
   menuItems: HospitalityMenuItemState[];
   openContainers: HospitalityOpenContainerState[];
+  pantryLots: HospitalityPantryLotState[];
   shiftReports: HospitalityShiftReportState[];
   incidents: HospitalityIncidentState[];
   nextMenuItemNumber: number;
   nextContainerNumber: number;
+  nextPantryLotNumber: number;
   nextShiftNumber: number;
   nextIncidentNumber: number;
 }
@@ -157,6 +195,19 @@ interface ConsumptionResult {
   consumedMl: number;
   cost: number;
   sourceLotIds: string[];
+}
+
+interface PantryConsumptionResult {
+  pantryLots: HospitalityPantryLotState[];
+  consumed: number;
+  cost: number;
+}
+
+interface PantryRestockResult {
+  pantryLots: HospitalityPantryLotState[];
+  organizations: OrganizationState[];
+  nextPantryLotNumber: number;
+  spend: number;
 }
 
 export function createHospitalityFoundation(day: number): HospitalityFoundation {
@@ -215,15 +266,18 @@ export function createHospitalityState(organizations: OrganizationState[], asset
   const venues = assets
     .filter((asset) => isHospitalityAssetType(asset.type) && asset.operatorOrganizationId)
     .map((asset, index) => createVenue(asset, organizations, day, index));
+  const pantry = createInitialPantryLots(venues, day, 1);
   const state: HospitalityState = {
-    hospitalityVersion: 1,
+    hospitalityVersion: 2,
     venues,
     menuItems: [],
     openContainers: [],
+    pantryLots: pantry.pantryLots,
     shiftReports: [],
     incidents: [],
     nextMenuItemNumber: 1,
     nextContainerNumber: 1,
+    nextPantryLotNumber: pantry.nextPantryLotNumber,
     nextShiftNumber: 1,
     nextIncidentNumber: 1,
   };
@@ -243,8 +297,9 @@ export function ensureHospitalitySector(input: {
   const organizations = [...input.organizations, ...foundation.organizations.filter((item) => !organizationIds.has(item.id))];
   const assets = [...input.assets, ...foundation.assets.filter((item) => !assetIds.has(item.id))];
   const trade = ensureHospitalityTrade(input.trade, organizations, assets, input.day);
-  const base = input.state?.hospitalityVersion === 1
-    ? normalizeHospitalityState(input.state, organizations, assets, trade, input.day)
+  const storedVersion = (input.state as { hospitalityVersion?: number } | undefined)?.hospitalityVersion;
+  const base = storedVersion === 1 || storedVersion === 2
+    ? normalizeHospitalityState(input.state as unknown as Partial<HospitalityState>, organizations, assets, trade, input.day)
     : createHospitalityState(organizations, assets, trade, input.day);
   return { hospitality: ensureHospitalityMenus(base, trade, input.day), organizations, assets, trade };
 }
@@ -260,16 +315,19 @@ export function advanceHospitalityDay(
   let hospitality = ensureHospitalityMenus(state, tradeInput, day);
   let trade: TradeState = {
     ...tradeInput,
+    inventory: tradeInput.inventory.map((item) => ({ ...item })),
     shelves: tradeInput.shelves.map((item) => ({ ...item, lotAllocations: cloneAllocations(item.lotAllocations), soldLotAllocationsToday: [] })),
     operations: [...tradeInput.operations],
   };
   let demand = demandInput;
   let organizations = organizationsInput.map((item) => ({ ...item }));
   let openContainers = hospitality.openContainers.map((item) => ({ ...item, sourceLotAllocations: cloneAllocations(item.sourceLotAllocations) }));
-  let menuItems = hospitality.menuItems.map((item) => ({ ...item, ingredients: item.ingredients.map((ingredient) => ({ ...ingredient })) }));
+  let pantryLots = hospitality.pantryLots.map((item) => ({ ...item }));
+  let menuItems = hospitality.menuItems.map(cloneMenuItem);
   let venues = hospitality.venues.map((item) => ({ ...item, workforce: { ...item.workforce }, menuItemIds: [...item.menuItemIds], openContainerIds: [...item.openContainerIds] }));
   let incidents = [...hospitality.incidents];
   let nextContainerNumber = hospitality.nextContainerNumber;
+  let nextPantryLotNumber = hospitality.nextPantryLotNumber;
   let nextShiftNumber = hospitality.nextShiftNumber;
   let nextIncidentNumber = hospitality.nextIncidentNumber;
   let nextOperationNumber = trade.nextOperationNumber;
@@ -280,86 +338,167 @@ export function advanceHospitalityDay(
     const venue = venues[venueIndex];
     if (!venue) continue;
     const asset = assets.find((item) => item.id === venue.assetId);
-    const organization = organizations.find((item) => item.id === venue.operatorOrganizationId);
+    const organizationIndex = organizations.findIndex((item) => item.id === venue.operatorOrganizationId);
+    let organization = organizations[organizationIndex];
     const concept = hospitalityConcept(venue.concept);
     if (!asset || !organization || venue.status !== 'open' || asset.status !== 'operating' || !concept.openDays.includes(dayOfWeek(day))) continue;
 
-    const spoilage = removeExpiredContainers(openContainers, venue.id, day);
-    openContainers = spoilage.openContainers;
-    let shiftWasteMl = spoilage.wasteMl;
-    if (spoilage.wasteMl > 0) {
+    const containerSpoilage = removeExpiredContainers(openContainers, venue.id, day);
+    openContainers = containerSpoilage.openContainers;
+    let shiftWasteMl = containerSpoilage.wasteMl;
+    if (containerSpoilage.wasteMl > 0) {
       const incident: HospitalityIncidentState = {
         id: `hospitality-incident-${nextIncidentNumber++}`,
         day,
         venueId: venue.id,
         kind: 'spoilage',
-        severity: Math.min(100, Math.round(spoilage.wasteMl / 30)),
+        severity: Math.min(100, Math.round(containerSpoilage.wasteMl / 30)),
         headline: `${asset.name}: списаны открытые бутылки`,
-        detail: `${Math.round(spoilage.wasteMl)} мл потеряно из-за истёкшего срока после открытия.`,
+        detail: `${Math.round(containerSpoilage.wasteMl)} мл потеряно из-за истёкшего срока после открытия.`,
         resolved: true,
       };
       incidents = [incident, ...incidents].slice(0, 500);
     }
 
+    const pantrySpoilage = removeExpiredPantryLots(pantryLots, venue.id, day);
+    pantryLots = pantrySpoilage.pantryLots;
+    if (pantrySpoilage.quantity > 0) {
+      const incident: HospitalityIncidentState = {
+        id: `hospitality-incident-${nextIncidentNumber++}`,
+        day,
+        venueId: venue.id,
+        kind: 'spoilage',
+        severity: Math.min(75, Math.max(5, Math.round(pantrySpoilage.cost * 4))),
+        headline: `${asset.name}: испорчены ингредиенты бара`,
+        detail: `Кладовая списала ${roundToOne(pantrySpoilage.quantity)} единиц на сумму ${roundMoney(pantrySpoilage.cost)}.`,
+        resolved: true,
+      };
+      incidents = [incident, ...incidents].slice(0, 500);
+    }
+
+    const restock = restockVenuePantry(pantryLots, venue, organizations, day, nextPantryLotNumber);
+    pantryLots = restock.pantryLots;
+    organizations = restock.organizations;
+    nextPantryLotNumber = restock.nextPantryLotNumber;
+    organization = organizations[organizationIndex];
+    if (!organization) continue;
+    if (restock.spend > 0) {
+      const pantryOperation: TradeOperationState = {
+        id: `trade-operation-${day}-${nextOperationNumber++}`,
+        day,
+        kind: 'purchase',
+        organizationId: organization.id,
+        counterpartyOrganizationId: null,
+        assetId: asset.id,
+        headline: `${asset.name}: пополнение кладовой`,
+        detail: `Соки, сиропы, газировка и гарниши пополнены на ${roundMoney(restock.spend)}.`,
+        amount: roundMoney(restock.spend),
+      };
+      trade.operations = [pantryOperation, ...trade.operations].slice(0, 240);
+    }
+
+    menuItems = refreshVenueMenuAvailability(menuItems, venue, trade, openContainers, pantryLots, day);
     const region = demand.regions.find((item) => item.regionId === asset.regionId);
     const trafficMultiplier = region?.today.channelTraffic[concept.channel] ?? 1;
     const weekendBoost = region?.today.weekend ? (concept.channel === 'club' ? 1.32 : 1.14) : 1;
     const deterministicNoise = deterministicFraction(`${day}:${venue.id}:guests`, .87, 1.14);
     const guests = Math.max(0, Math.round(Math.min(venue.capacity * 1.35, venue.capacity * concept.baseOccupancy * trafficMultiplier * weekendBoost * deterministicNoise + asset.footfall * .22)));
-    const serviceCapacity = Math.max(1, Math.round(venue.workforce.bartenders * 34 + venue.workforce.servers * 18 + venue.stations * 26));
-    const servedGuestsTarget = Math.min(guests, serviceCapacity);
+    const serviceSecondsAvailable = Math.max(900, Math.round((venue.workforce.bartenders * 15_600 + venue.workforce.servers * 2_400 + venue.stations * 3_600) * (.7 + venue.serviceQuality / 250)));
+    let remainingServiceSeconds = serviceSecondsAvailable;
     const activeMenu = menuItems.filter((item) => item.venueId === venue.id && item.active && item.ingredients.length > 0);
-    const scored = activeMenu.map((item) => ({ item, score: scoreMenuItem(item, trade.products, demand, asset, organization, venue) })).filter((entry) => entry.score > 0);
+    const scored = activeMenu
+      .map((item) => ({ item, score: scoreMenuItem(item, trade.products, demand, asset, organization, venue) }))
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score || left.item.preparationSeconds - right.item.preparationSeconds);
     const totalScore = scored.reduce((sum, entry) => sum + entry.score, 0);
     const itemReports: HospitalityShiftItemState[] = [];
     let shiftRevenue = 0;
     let shiftCost = 0;
     let orders = 0;
+    let qualityTotal = 0;
 
     for (const [index, entry] of scored.entries()) {
-      if (orders >= servedGuestsTarget || totalScore <= 0) break;
-      const remainingGuestCapacity = servedGuestsTarget - orders;
+      if (orders >= guests || totalScore <= 0 || remainingServiceSeconds < 20) break;
+      const remainingGuestCapacity = guests - orders;
       const desired = index === scored.length - 1
         ? remainingGuestCapacity
-        : Math.min(remainingGuestCapacity, Math.max(0, Math.round(servedGuestsTarget * (entry.score / totalScore))));
+        : Math.min(remainingGuestCapacity, Math.max(0, Math.round(guests * (entry.score / totalScore))));
       if (desired <= 0) continue;
-      const available = availableMenuPortions(entry.item, trade, openContainers, venue.id);
-      const sold = Math.min(desired, available);
+      const available = availableMenuPortions(entry.item, trade, openContainers, pantryLots, venue.id, day);
+      const secondsPerServe = effectivePreparationSeconds(entry.item, venue);
+      const timeCapacity = Math.floor(remainingServiceSeconds / Math.max(20, secondsPerServe));
+      const sold = Math.min(desired, available, timeCapacity);
       if (sold <= 0) continue;
       let sourceLotIds: string[] = [];
       let consumedMl = 0;
+      let pantryConsumed = 0;
       let itemCost = 0;
-      let canServe = sold;
+      let candidateTrade = trade;
+      let candidateOpenContainers = openContainers;
+      let candidatePantryLots = pantryLots;
+      let candidateContainerNumber = nextContainerNumber;
+      let fullyConsumed = true;
       for (const ingredient of entry.item.ingredients) {
-        if (!ingredient.productId) continue;
-        const requiredMl = ingredient.amountMl * sold;
-        const consumed = consumeProductMl(trade, openContainers, venue.id, ingredient.productId, requiredMl, day, nextContainerNumber);
-        trade = consumed.trade;
-        openContainers = consumed.openContainers;
-        nextContainerNumber = consumed.nextContainerNumber;
-        consumedMl += consumed.consumedMl;
-        itemCost += consumed.cost;
-        sourceLotIds = unique([...sourceLotIds, ...consumed.sourceLotIds]);
-        if (consumed.consumedMl + .01 < requiredMl) canServe = Math.min(canServe, Math.floor(consumed.consumedMl / Math.max(1, ingredient.amountMl)));
+        if (ingredient.productId) {
+          const requiredMl = ingredient.amount * sold;
+          const consumed = consumeProductMl(candidateTrade, candidateOpenContainers, venue.id, ingredient.productId, requiredMl, day, candidateContainerNumber);
+          if (consumed.consumedMl + .01 < requiredMl) {
+            fullyConsumed = false;
+            break;
+          }
+          candidateTrade = consumed.trade;
+          candidateOpenContainers = consumed.openContainers;
+          candidateContainerNumber = consumed.nextContainerNumber;
+          consumedMl += consumed.consumedMl;
+          itemCost += consumed.cost;
+          sourceLotIds = unique([...sourceLotIds, ...consumed.sourceLotIds]);
+        } else if (ingredient.pantryTag) {
+          const required = ingredient.amount * sold;
+          const consumed = consumePantryIngredient(candidatePantryLots, venue.id, ingredient.pantryTag, ingredient.unit, required, day);
+          if (consumed.consumed + .01 < required) {
+            fullyConsumed = false;
+            break;
+          }
+          candidatePantryLots = consumed.pantryLots;
+          pantryConsumed += consumed.consumed;
+          itemCost += consumed.cost;
+        }
       }
-      if (canServe <= 0) continue;
-      const revenue = roundMoney(entry.item.salePrice * canServe);
-      orders += canServe;
+      if (!fullyConsumed) continue;
+      trade = candidateTrade;
+      openContainers = candidateOpenContainers;
+      pantryLots = candidatePantryLots;
+      nextContainerNumber = candidateContainerNumber;
+      const revenue = roundMoney(entry.item.salePrice * sold);
+      const serveQuality = calculateMenuItemQuality(entry.item, trade.products, venue);
+      orders += sold;
       shiftRevenue += revenue;
       shiftCost += itemCost;
+      qualityTotal += serveQuality * sold;
+      remainingServiceSeconds = Math.max(0, remainingServiceSeconds - secondsPerServe * sold);
       const menuIndex = menuItems.findIndex((item) => item.id === entry.item.id);
       if (menuIndex >= 0 && menuItems[menuIndex]) menuItems[menuIndex] = {
         ...menuItems[menuIndex],
-        totalSold: menuItems[menuIndex].totalSold + canServe,
+        totalSold: menuItems[menuIndex].totalSold + sold,
         totalRevenue: roundMoney(menuItems[menuIndex].totalRevenue + revenue),
       };
-      itemReports.push({ menuItemId: entry.item.id, orders: canServe, revenue, consumedMl, sourceLotIds });
+      itemReports.push({
+        menuItemId: entry.item.id,
+        orders: sold,
+        revenue,
+        consumedMl: roundToOne(consumedMl),
+        pantryConsumed: roundToOne(pantryConsumed),
+        sourceLotIds,
+        quality: serveQuality,
+      });
     }
 
     const servedGuests = Math.min(guests, orders);
     const lostGuests = Math.max(0, guests - servedGuests);
-    const averageWaitMinutes = roundToOne(Math.max(2, 4 + Math.max(0, guests - serviceCapacity) / Math.max(1, venue.stations * 3)));
-    let satisfaction = clamp(Math.round(68 + venue.serviceQuality * .18 + venue.cleanliness * .08 - averageWaitMinutes * 1.2 - (lostGuests / Math.max(1, guests)) * 38), 12, 98);
+    const serviceUtilization = roundToOne(clamp((serviceSecondsAvailable - remainingServiceSeconds) / Math.max(1, serviceSecondsAvailable) * 100, 0, 100));
+    const averageWaitMinutes = roundToOne(Math.max(2, 2.5 + serviceUtilization * .075 + (lostGuests / Math.max(1, guests)) * 12));
+    const averageServeQuality = orders > 0 ? roundToOne(qualityTotal / orders) : 0;
+    let satisfaction = clamp(Math.round(58 + venue.serviceQuality * .16 + venue.cleanliness * .08 + (averageServeQuality - 55) * .22 - averageWaitMinutes * 1.05 - (lostGuests / Math.max(1, guests)) * 38), 10, 98);
     const incidentIds: string[] = [];
     if (guests > venue.capacity * 1.12 && deterministicFraction(`${day}:${venue.id}:crowd`, 0, 1) > .78) {
       const incident: HospitalityIncidentState = {
@@ -385,7 +524,7 @@ export function advanceHospitalityDay(
         kind: 'stockout',
         severity: 55,
         headline: `${asset.name}: бар остался без доступного меню`,
-        detail: 'Гости пришли, но склад и открытые бутылки не позволили принять заказы.',
+        detail: 'Гости пришли, но склад и кладовая не позволили принять заказы.',
         resolved: false,
       };
       incidents = [incident, ...incidents].slice(0, 500);
@@ -407,6 +546,8 @@ export function advanceHospitalityDay(
       costOfGoods: roundMoney(shiftCost),
       wasteMl: roundToOne(shiftWasteMl),
       averageWaitMinutes,
+      serviceUtilization,
+      averageServeQuality,
       satisfaction,
       incidentIds,
       items: itemReports,
@@ -430,7 +571,7 @@ export function advanceHospitalityDay(
       counterpartyOrganizationId: null,
       assetId: asset.id,
       headline: `${asset.name}: смена завершена`,
-      detail: `${servedGuests} гостей · ${orders} заказов · выручка ${roundMoney(shiftRevenue)}.`,
+      detail: `${servedGuests} гостей · ${orders} заказов · выручка ${roundMoney(shiftRevenue)} · качество ${averageServeQuality}.`,
       amount: roundMoney(shiftRevenue),
     };
     trade.operations = [operation, ...trade.operations].slice(0, 240);
@@ -448,7 +589,7 @@ export function advanceHospitalityDay(
         assetFootfall: asset.footfall,
         productId: dominantProduct.id,
         beverageCategoryId: dominantProduct.beverageCategoryId ?? dominantProduct.family,
-        quality: dominantProduct.quality,
+        quality: Math.round(averageServeQuality || dominantProduct.quality),
         retailPrice: dominantMenu?.salePrice ?? dominantProduct.recommendedRetailPrice,
         referencePrice: dominantProduct.recommendedRetailPrice,
         organizationReputation: organization.reputation,
@@ -485,15 +626,21 @@ export function advanceHospitalityDay(
     };
   }
 
+  menuItems = menuItems.map((item) => {
+    const venue = venues.find((candidate) => candidate.id === item.venueId);
+    return venue ? refreshMenuItemAvailability(item, venue, trade, openContainers, pantryLots, day) : item;
+  });
   trade = { ...trade, nextOperationNumber, operations: trade.operations };
   hospitality = {
     ...hospitality,
     venues,
     menuItems,
     openContainers,
+    pantryLots,
     shiftReports: [...reports, ...hospitality.shiftReports].slice(0, 1200),
     incidents,
     nextContainerNumber,
+    nextPantryLotNumber,
     nextShiftNumber,
     nextIncidentNumber,
   };
@@ -558,7 +705,13 @@ function createVenue(asset: WorldAssetState, organizations: OrganizationState[],
   };
 }
 
-function normalizeHospitalityState(state: HospitalityState, organizations: OrganizationState[], assets: WorldAssetState[], trade: TradeState, day: number): HospitalityState {
+function normalizeHospitalityState(
+  state: Partial<HospitalityState>,
+  organizations: OrganizationState[],
+  assets: WorldAssetState[],
+  trade: TradeState,
+  day: number,
+): HospitalityState {
   const existingByAsset = new Map((state.venues ?? []).map((item) => [item.assetId, item]));
   const venues = assets.filter((asset) => isHospitalityAssetType(asset.type) && asset.operatorOrganizationId).map((asset, index) => {
     const current = existingByAsset.get(asset.id);
@@ -574,15 +727,57 @@ function normalizeHospitalityState(state: HospitalityState, organizations: Organ
       openContainerIds: current.openContainerIds ?? [],
     };
   });
+  const rawItems = (state.menuItems ?? []) as Array<Partial<HospitalityMenuItemState> & { amountMl?: number; ingredients?: Array<Partial<HospitalityMenuIngredientState> & { amountMl?: number }> }>;
+  const menuItems = rawItems.map((item, index): HospitalityMenuItemState => {
+    const recipe = item.recipeId ? cocktailRecipe(item.recipeId) : cocktailRecipes.find((candidate) => candidate.name === item.name);
+    const ingredients = (item.ingredients ?? []).map((ingredient): HospitalityMenuIngredientState => ({
+      productId: ingredient.productId ?? null,
+      categoryId: ingredient.categoryId ?? null,
+      pantryTag: ingredient.pantryTag ?? null,
+      amount: ingredient.amount ?? (ingredient as { amountMl?: number }).amountMl ?? 0,
+      unit: ingredient.unit ?? 'ml',
+    }));
+    return {
+      id: item.id ?? `hospitality-menu-${index + 1}`,
+      venueId: item.venueId ?? 'unknown',
+      name: item.name ?? recipe?.name ?? 'Позиция меню',
+      kind: item.kind ?? (recipe ? 'cocktail' : 'bottle'),
+      recipeId: recipe?.id ?? item.recipeId ?? null,
+      method: item.method ?? recipe?.method ?? null,
+      glassware: item.glassware ?? recipe?.glassware ?? 'glass',
+      ice: item.ice ?? recipe?.ice ?? null,
+      garnish: item.garnish ?? recipe?.garnish ?? [],
+      preparationSeconds: item.preparationSeconds ?? recipe?.preparationSeconds ?? 35,
+      complexity: item.complexity ?? recipe?.complexity ?? 1,
+      ingredients,
+      materialCost: item.materialCost ?? calculateMenuMaterialCost(ingredients, trade.products),
+      salePrice: item.salePrice ?? 0,
+      active: item.active ?? true,
+      availabilityReason: item.availabilityReason ?? null,
+      totalSold: item.totalSold ?? 0,
+      totalRevenue: item.totalRevenue ?? 0,
+      createdDay: item.createdDay ?? day,
+    };
+  });
+  const existingPantry = (state.pantryLots ?? []).map((item) => ({ ...item }));
+  const missingPantryVenues = venues.filter((venue) => supportsCocktails(venue.concept) && !existingPantry.some((lot) => lot.venueId === venue.id));
+  const pantrySeed = createInitialPantryLots(missingPantryVenues, day, state.nextPantryLotNumber ?? 1);
   const normalized: HospitalityState = {
-    hospitalityVersion: 1,
+    hospitalityVersion: 2,
     venues,
-    menuItems: (state.menuItems ?? []).map((item) => ({ ...item, ingredients: (item.ingredients ?? []).map((ingredient) => ({ ...ingredient })) })),
+    menuItems,
     openContainers: (state.openContainers ?? []).map((item) => ({ ...item, sourceLotAllocations: cloneAllocations(item.sourceLotAllocations) })),
-    shiftReports: state.shiftReports ?? [],
+    pantryLots: [...existingPantry, ...pantrySeed.pantryLots],
+    shiftReports: (state.shiftReports ?? []).map((report) => ({
+      ...report,
+      serviceUtilization: report.serviceUtilization ?? 0,
+      averageServeQuality: report.averageServeQuality ?? 0,
+      items: (report.items ?? []).map((item) => ({ ...item, pantryConsumed: item.pantryConsumed ?? 0, quality: item.quality ?? 0 })),
+    })),
     incidents: state.incidents ?? [],
-    nextMenuItemNumber: state.nextMenuItemNumber ?? 1,
+    nextMenuItemNumber: state.nextMenuItemNumber ?? Math.max(1, menuItems.length + 1),
     nextContainerNumber: state.nextContainerNumber ?? 1,
+    nextPantryLotNumber: pantrySeed.nextPantryLotNumber,
     nextShiftNumber: state.nextShiftNumber ?? 1,
     nextIncidentNumber: state.nextIncidentNumber ?? 1,
   };
@@ -591,53 +786,92 @@ function normalizeHospitalityState(state: HospitalityState, organizations: Organ
 
 function ensureHospitalityMenus(state: HospitalityState, trade: TradeState, day: number): HospitalityState {
   let nextMenuNumber = state.nextMenuItemNumber;
-  const menuItems = state.menuItems.map((item) => ({ ...item, ingredients: item.ingredients.map((ingredient) => ({ ...ingredient })) }));
+  const menuItems = state.menuItems.map(cloneMenuItem);
   const venues = state.venues.map((venue) => {
     const concept = hospitalityConcept(venue.concept);
     const shelves = trade.shelves.filter((shelf) => shelf.assetId === venue.assetId);
-    const existingItems = menuItems.filter((item) => item.venueId === venue.id);
-    const productIds = new Set(existingItems.flatMap((item) => item.ingredients.map((ingredient) => ingredient.productId).filter((id): id is string => Boolean(id))));
-    for (const shelf of shelves) {
+    const venueItems = menuItems.filter((item) => item.venueId === venue.id);
+    const cocktailSlots = supportsCocktails(venue.concept) ? Math.max(5, Math.floor(concept.menuSlots * .58)) : 0;
+    const directSlots = Math.max(1, concept.menuSlots - cocktailSlots);
+    const directItems = venueItems.filter((item) => item.kind !== 'cocktail');
+    const representedProductIds = new Set(directItems.flatMap((item) => item.ingredients.map((ingredient) => ingredient.productId).filter((id): id is string => Boolean(id))));
+    const rankedShelves = shelves.slice().sort((left, right) => {
+      const leftProduct = trade.products.find((item) => item.id === left.productId);
+      const rightProduct = trade.products.find((item) => item.id === right.productId);
+      return (rightProduct ? categoryRank(rightProduct, concept.preferredCategories) : 0) - (leftProduct ? categoryRank(leftProduct, concept.preferredCategories) : 0)
+        || (rightProduct?.quality ?? 0) - (leftProduct?.quality ?? 0);
+    });
+    for (const shelf of rankedShelves) {
       const product = trade.products.find((item) => item.id === shelf.productId);
-      if (!product || productIds.has(product.id) || existingItems.length >= concept.menuSlots) continue;
+      if (!product || representedProductIds.has(product.id) || directItems.length >= directSlots) continue;
       const item = createProductMenuItem(venue.id, product, concept.priceMultiplier, day, nextMenuNumber++);
       menuItems.push(item);
-      existingItems.push(item);
-      productIds.add(product.id);
+      directItems.push(item);
+      representedProductIds.add(product.id);
     }
-    if (venue.concept === 'cocktail_bar' || venue.concept === 'lounge' || venue.concept === 'hotel_bar' || venue.concept === 'nightclub') {
-      const existingNames = new Set(existingItems.map((item) => item.name));
-      for (const recipe of cocktailRecipes) {
-        if (existingItems.length >= concept.menuSlots || existingNames.has(recipe.name)) continue;
+
+    if (cocktailSlots > 0) {
+      const recipes = cocktailRecipes.slice().sort((left, right) => cocktailFitScore(right, venue.concept) - cocktailFitScore(left, venue.concept) || left.id.localeCompare(right.id));
+      const existingByRecipe = new Map(menuItems.filter((item) => item.venueId === venue.id && item.recipeId).map((item) => [item.recipeId, item]));
+      let cocktailCount = menuItems.filter((item) => item.venueId === venue.id && item.kind === 'cocktail').length;
+      for (const recipe of recipes) {
+        const existing = existingByRecipe.get(recipe.id);
         const ingredients = resolveCocktailIngredients(recipe.ingredients, shelves, trade.products);
         if (!ingredients) continue;
-        const materialCost = ingredients.reduce((sum, ingredient) => {
-          if (!ingredient.productId) return sum + ingredient.amountMl * .004;
-          const product = trade.products.find((item) => item.id === ingredient.productId);
-          return sum + (product ? product.unitCost * ingredient.amountMl / Math.max(1, product.packageVolumeLiters * 1000) : 0);
-        }, 0);
-        const item: HospitalityMenuItemState = {
+        const materialCost = calculateMenuMaterialCost(ingredients, trade.products);
+        if (existing) {
+          const index = menuItems.findIndex((item) => item.id === existing.id);
+          if (index >= 0) menuItems[index] = refreshMenuItemAvailability({
+            ...existing,
+            name: recipe.name,
+            recipeId: recipe.id,
+            method: recipe.method,
+            glassware: recipe.glassware,
+            ice: recipe.ice,
+            garnish: [...recipe.garnish],
+            preparationSeconds: recipe.preparationSeconds,
+            complexity: recipe.complexity,
+            ingredients,
+            materialCost,
+            salePrice: cocktailSalePrice(materialCost, recipe, concept.priceMultiplier, trade.products, ingredients),
+          }, venue, trade, state.openContainers, state.pantryLots, day);
+          continue;
+        }
+        if (cocktailCount >= cocktailSlots) continue;
+        const item = refreshMenuItemAvailability({
           id: `hospitality-menu-${nextMenuNumber++}`,
           venueId: venue.id,
           name: recipe.name,
           kind: 'cocktail',
+          recipeId: recipe.id,
           method: recipe.method,
           glassware: recipe.glassware,
+          ice: recipe.ice,
+          garnish: [...recipe.garnish],
+          preparationSeconds: recipe.preparationSeconds,
+          complexity: recipe.complexity,
           ingredients,
-          salePrice: roundMoney(Math.max(8, materialCost * 4.2 * concept.priceMultiplier)),
+          materialCost,
+          salePrice: cocktailSalePrice(materialCost, recipe, concept.priceMultiplier, trade.products, ingredients),
           active: true,
+          availabilityReason: null,
           totalSold: 0,
           totalRevenue: 0,
           createdDay: day,
-        };
+        }, venue, trade, state.openContainers, state.pantryLots, day);
         menuItems.push(item);
-        existingItems.push(item);
-        existingNames.add(recipe.name);
+        cocktailCount += 1;
       }
     }
-    return { ...venue, menuItemIds: menuItems.filter((item) => item.venueId === venue.id).map((item) => item.id) };
+
+    const ids = menuItems.filter((item) => item.venueId === venue.id).map((item) => item.id);
+    return { ...venue, menuItemIds: ids };
   });
-  return { ...state, venues, menuItems, nextMenuItemNumber: nextMenuNumber };
+  const refreshed = menuItems.map((item) => {
+    const venue = venues.find((candidate) => candidate.id === item.venueId);
+    return venue ? refreshMenuItemAvailability(item, venue, trade, state.openContainers, state.pantryLots, day) : item;
+  });
+  return { ...state, venues, menuItems: refreshed, nextMenuItemNumber: nextMenuNumber };
 }
 
 function ensureHospitalityTrade(tradeInput: TradeState, organizations: OrganizationState[], assets: WorldAssetState[], day: number): TradeState {
@@ -746,8 +980,8 @@ function ensureHospitalityTrade(tradeInput: TradeState, organizations: Organizat
 function createProductMenuItem(venueId: string, product: TradeProductState, priceMultiplier: number, day: number, number: number): HospitalityMenuItemState {
   const category = product.beverageCategoryId ?? product.family;
   const kind = menuKindForProduct(product);
-  const amountMl = servingMl(kind, product.packageVolumeLiters);
-  const unitCost = product.unitCost * amountMl / Math.max(1, product.packageVolumeLiters * 1000);
+  const amount = servingMl(kind, product.packageVolumeLiters);
+  const unitCost = product.unitCost * amount / Math.max(1, product.packageVolumeLiters * 1000);
   const basePrice = kind === 'bottle' || kind === 'non_alcoholic'
     ? product.recommendedRetailPrice
     : Math.max(2.8, unitCost * (kind === 'draft' ? 3.1 : 4.1));
@@ -756,11 +990,18 @@ function createProductMenuItem(venueId: string, product: TradeProductState, pric
     venueId,
     name: serviceName(product, kind),
     kind,
-    method: kind === 'cocktail' ? 'build' : null,
+    recipeId: null,
+    method: null,
     glassware: glasswareForKind(kind),
-    ingredients: [{ productId: product.id, categoryId: category, pantryTag: null, amountMl }],
+    ice: kind === 'shot' || kind === 'bottle' ? 'none' : null,
+    garnish: [],
+    preparationSeconds: kind === 'draft' ? 35 : kind === 'glass' ? 28 : kind === 'shot' ? 20 : 25,
+    complexity: 1,
+    ingredients: [{ productId: product.id, categoryId: category, pantryTag: null, amount, unit: 'ml' }],
+    materialCost: roundMoney(unitCost),
     salePrice: roundMoney(basePrice * priceMultiplier),
     active: true,
+    availabilityReason: null,
     totalSold: 0,
     totalRevenue: 0,
     createdDay: day,
@@ -768,34 +1009,41 @@ function createProductMenuItem(venueId: string, product: TradeProductState, pric
 }
 
 function resolveCocktailIngredients(
-  definitions: Array<{ amountMl: number; productId?: string; categoryId?: BeverageCategoryId; ingredientTag?: string; optional?: boolean }>,
+  definitions: CocktailIngredientDefinition[],
   shelves: TradeShelfListingState[],
   products: TradeProductState[],
 ): HospitalityMenuIngredientState[] | null {
   const result: HospitalityMenuIngredientState[] = [];
   for (const definition of definitions) {
-    if (definition.productId) {
-      const product = products.find((item) => item.id === definition.productId);
-      const stocked = product && shelves.some((shelf) => shelf.productId === product.id && shelf.units > 0);
-      if (!stocked && !definition.optional) return null;
-      if (stocked && product) result.push({ productId: product.id, categoryId: product.beverageCategoryId ?? product.family, pantryTag: null, amountMl: definition.amountMl });
-      continue;
-    }
-    if (definition.categoryId) {
-      const fallbackCategories: Partial<Record<BeverageCategoryId, BeverageCategoryId[]>> = {
-        amaro_bitter: ['liqueur'], vermouth_aperitif: ['still_wine', 'fortified_wine'], mixer: ['alcohol_free'],
-      };
-      const accepted = [definition.categoryId, ...(fallbackCategories[definition.categoryId] ?? [])];
-      const product = products.find((item) => accepted.includes(item.beverageCategoryId ?? item.family) && shelves.some((shelf) => shelf.productId === item.id && shelf.units > 0));
-      if (!product && definition.categoryId === 'mixer') {
-        result.push({ productId: null, categoryId: definition.categoryId, pantryTag: 'soda', amountMl: definition.amountMl });
-        continue;
+    const selectors: CocktailIngredientSelector[] = [definition, ...(definition.alternatives ?? [])];
+    let resolved: HospitalityMenuIngredientState | null = null;
+    for (const selector of selectors) {
+      if (selector.productId) {
+        const product = products.find((item) => item.id === selector.productId);
+        if (product && shelves.some((shelf) => shelf.productId === product.id && shelf.units > 0)) {
+          resolved = { productId: product.id, categoryId: product.beverageCategoryId ?? product.family, pantryTag: null, amount: definition.amount, unit: 'ml' };
+          break;
+        }
       }
-      if (!product && !definition.optional) return null;
-      if (product) result.push({ productId: product.id, categoryId: definition.categoryId, pantryTag: null, amountMl: definition.amountMl });
-      continue;
+      if (selector.categoryId) {
+        const candidates = products.filter((item) => (item.beverageCategoryId ?? item.family) === selector.categoryId && shelves.some((shelf) => shelf.productId === item.id && shelf.units > 0));
+        const product = candidates.sort((left, right) => {
+          const leftUnits = shelves.filter((shelf) => shelf.productId === left.id).reduce((sum, shelf) => sum + shelf.units, 0);
+          const rightUnits = shelves.filter((shelf) => shelf.productId === right.id).reduce((sum, shelf) => sum + shelf.units, 0);
+          return Number(rightUnits > 0) - Number(leftUnits > 0) || right.quality - left.quality || left.unitCost - right.unitCost;
+        })[0];
+        if (product) {
+          resolved = { productId: product.id, categoryId: selector.categoryId, pantryTag: null, amount: definition.amount, unit: 'ml' };
+          break;
+        }
+      }
+      if (selector.pantryTag && pantryDefinition(selector.pantryTag)) {
+        resolved = { productId: null, categoryId: null, pantryTag: selector.pantryTag, amount: definition.amount, unit: definition.unit };
+        break;
+      }
     }
-    if (definition.ingredientTag) result.push({ productId: null, categoryId: null, pantryTag: definition.ingredientTag, amountMl: definition.amountMl });
+    if (!resolved && !definition.optional) return null;
+    if (resolved) result.push(resolved);
   }
   return result.length ? result : null;
 }
@@ -809,7 +1057,8 @@ function scoreMenuItem(
   venue: HospitalityVenueState,
 ): number {
   const product = products.find((candidate) => candidate.id === item.ingredients.find((ingredient) => ingredient.productId)?.productId);
-  if (!product) return .1;
+  if (!product) return item.kind === 'cocktail' ? .12 : .05;
+  const quality = calculateMenuItemQuality(item, products, venue);
   const result = calculateShelfDemand(demand, {
     day: demand.currentDay,
     regionId: asset.regionId,
@@ -818,29 +1067,47 @@ function scoreMenuItem(
     assetFootfall: asset.footfall,
     productId: product.id,
     beverageCategoryId: product.beverageCategoryId ?? product.family,
-    quality: product.quality,
+    quality,
     retailPrice: item.salePrice,
-    referencePrice: Math.max(product.recommendedRetailPrice, item.salePrice * .62),
+    referencePrice: Math.max(product.recommendedRetailPrice, item.materialCost * 3.2, item.salePrice * .58),
     organizationReputation: organization.reputation,
   });
   const concept = hospitalityConcept(venue.concept);
-  const preferred = concept.preferredCategories.includes(product.beverageCategoryId ?? product.family) ? 1.35 : .8;
-  const cocktailBonus = item.kind === 'cocktail' && (venue.concept === 'cocktail_bar' || venue.concept === 'lounge') ? 1.5 : 1;
-  return Math.max(.05, result.demandIndex * preferred * cocktailBonus * (.7 + product.quality / 180));
+  const preferred = concept.preferredCategories.includes(product.beverageCategoryId ?? product.family) ? 1.28 : .86;
+  const cocktailBonus = item.kind === 'cocktail'
+    ? venue.concept === 'cocktail_bar' ? 1.58 : venue.concept === 'lounge' || venue.concept === 'hotel_bar' ? 1.34 : venue.concept === 'nightclub' ? 1.18 : .92
+    : 1;
+  const complexityFit = item.kind === 'cocktail' && venue.concept === 'nightclub' ? clamp(1.22 - item.complexity * .07, .78, 1.15) : 1;
+  return Math.max(.05, result.demandIndex * preferred * cocktailBonus * complexityFit * (.72 + quality / 175));
 }
 
-function availableMenuPortions(item: HospitalityMenuItemState, trade: TradeState, openContainers: HospitalityOpenContainerState[], venueId: string): number {
+function availableMenuPortions(
+  item: HospitalityMenuItemState,
+  trade: TradeState,
+  openContainers: HospitalityOpenContainerState[],
+  pantryLots: HospitalityPantryLotState[],
+  venueId: string,
+  day: number,
+): number {
   let available = Number.POSITIVE_INFINITY;
   for (const ingredient of item.ingredients) {
-    if (!ingredient.productId) continue;
-    const product = trade.products.find((candidate) => candidate.id === ingredient.productId);
-    if (!product) return 0;
-    const openMl = openContainers.filter((container) => container.venueId === venueId && container.productId === product.id).reduce((sum, container) => sum + container.remainingMl, 0);
-    const shelfUnits = trade.shelves.filter((shelf) => shelf.assetId === venueId.replace('hospitality-venue:', '') && shelf.productId === product.id).reduce((sum, shelf) => sum + shelf.units, 0);
-    const totalMl = openMl + shelfUnits * product.packageVolumeLiters * 1000;
-    available = Math.min(available, Math.floor(totalMl / Math.max(1, ingredient.amountMl)));
+    if (ingredient.productId) {
+      const product = trade.products.find((candidate) => candidate.id === ingredient.productId);
+      if (!product || ingredient.unit !== 'ml') return 0;
+      const openMl = openContainers.filter((container) => container.venueId === venueId && container.productId === product.id && container.expiresDay >= day).reduce((sum, container) => sum + container.remainingMl, 0);
+      const shelfUnits = trade.shelves.filter((shelf) => shelf.assetId === venueId.replace('hospitality-venue:', '') && shelf.productId === product.id).reduce((sum, shelf) => sum + shelf.units, 0);
+      const totalMl = openMl + shelfUnits * product.packageVolumeLiters * 1000;
+      available = Math.min(available, Math.floor(totalMl / Math.max(.01, ingredient.amount)));
+      continue;
+    }
+    if (ingredient.pantryTag) {
+      const total = pantryLots
+        .filter((lot) => lot.venueId === venueId && lot.ingredientTag === ingredient.pantryTag && lot.unit === ingredient.unit && lot.expiresDay >= day)
+        .reduce((sum, lot) => sum + lot.quantity, 0);
+      available = Math.min(available, Math.floor(total / Math.max(.01, ingredient.amount)));
+    }
   }
-  return Number.isFinite(available) ? Math.max(0, available) : 999;
+  return Number.isFinite(available) ? Math.max(0, available) : 0;
 }
 
 function consumeProductMl(
@@ -915,6 +1182,258 @@ function consumeProductMl(
     consumedMl: roundToOne(consumedMl),
     cost: roundMoney(cost),
     sourceLotIds: unique(sourceLotIds),
+  };
+}
+
+function createInitialPantryLots(
+  venues: HospitalityVenueState[],
+  day: number,
+  startNumber: number,
+): { pantryLots: HospitalityPantryLotState[]; nextPantryLotNumber: number } {
+  let nextPantryLotNumber = startNumber;
+  const pantryLots: HospitalityPantryLotState[] = [];
+  for (const venue of venues.filter((item) => supportsCocktails(item.concept))) {
+    const scale = clamp(venue.capacity / 140, .65, 1.8);
+    for (const definition of cocktailPantryCatalog) {
+      pantryLots.push({
+        id: `hospitality-pantry-${nextPantryLotNumber++}`,
+        venueId: venue.id,
+        ingredientTag: definition.tag,
+        quantity: roundToOne(definition.openingStock * scale),
+        unit: definition.unit,
+        unitCost: definition.unitCost,
+        receivedDay: day,
+        expiresDay: day + definition.shelfLifeDays,
+        source: 'opening_stock',
+      });
+    }
+  }
+  return { pantryLots, nextPantryLotNumber };
+}
+
+function restockVenuePantry(
+  pantryInput: HospitalityPantryLotState[],
+  venue: HospitalityVenueState,
+  organizationsInput: OrganizationState[],
+  day: number,
+  startNumber: number,
+): PantryRestockResult {
+  if (!supportsCocktails(venue.concept)) return { pantryLots: pantryInput, organizations: organizationsInput, nextPantryLotNumber: startNumber, spend: 0 };
+  const pantryLots = pantryInput.map((item) => ({ ...item }));
+  const organizations = organizationsInput.map((item) => ({ ...item }));
+  const organizationIndex = organizations.findIndex((item) => item.id === venue.operatorOrganizationId);
+  const organization = organizations[organizationIndex];
+  if (!organization || organization.cash <= 0) return { pantryLots, organizations, nextPantryLotNumber: startNumber, spend: 0 };
+  let nextPantryLotNumber = startNumber;
+  let spend = 0;
+  let availableCash = organization.cash;
+  const scale = clamp(venue.capacity / 140, .65, 1.8);
+  for (const definition of cocktailPantryCatalog) {
+    const current = pantryLots
+      .filter((lot) => lot.venueId === venue.id && lot.ingredientTag === definition.tag && lot.unit === definition.unit && lot.expiresDay >= day)
+      .reduce((sum, lot) => sum + lot.quantity, 0);
+    const reorderPoint = definition.reorderPoint * scale;
+    if (current > reorderPoint) continue;
+    const requested = Math.max(0, definition.targetStock * scale - current);
+    const affordable = definition.unitCost > 0 ? availableCash / definition.unitCost : requested;
+    const quantity = roundToOne(Math.min(requested, affordable));
+    if (quantity <= 0) continue;
+    const cost = roundMoney(quantity * definition.unitCost);
+    pantryLots.push({
+      id: `hospitality-pantry-${nextPantryLotNumber++}`,
+      venueId: venue.id,
+      ingredientTag: definition.tag,
+      quantity,
+      unit: definition.unit,
+      unitCost: definition.unitCost,
+      receivedDay: day,
+      expiresDay: day + definition.shelfLifeDays,
+      source: 'restock',
+    });
+    spend += cost;
+    availableCash = Math.max(0, availableCash - cost);
+  }
+  organizations[organizationIndex] = {
+    ...organization,
+    cash: roundMoney(organization.cash - spend),
+    dailyCosts: roundMoney(organization.dailyCosts + spend),
+  };
+  return { pantryLots, organizations, nextPantryLotNumber, spend: roundMoney(spend) };
+}
+
+function removeExpiredPantryLots(
+  pantryLots: HospitalityPantryLotState[],
+  venueId: string,
+  day: number,
+): { pantryLots: HospitalityPantryLotState[]; quantity: number; cost: number } {
+  let quantity = 0;
+  let cost = 0;
+  const next = pantryLots.filter((lot) => {
+    if (lot.venueId !== venueId || lot.expiresDay >= day || lot.quantity <= 0) return lot.quantity > .01;
+    quantity += lot.quantity;
+    cost += lot.quantity * lot.unitCost;
+    return false;
+  });
+  return { pantryLots: next, quantity: roundToOne(quantity), cost: roundMoney(cost) };
+}
+
+function consumePantryIngredient(
+  pantryInput: HospitalityPantryLotState[],
+  venueId: string,
+  ingredientTag: string,
+  unit: CocktailIngredientUnit,
+  requested: number,
+  day: number,
+): PantryConsumptionResult {
+  if (requested <= 0) return { pantryLots: pantryInput, consumed: 0, cost: 0 };
+  const pantryLots = pantryInput.map((item) => ({ ...item }));
+  const indices = pantryLots
+    .map((lot, index) => ({ lot, index }))
+    .filter(({ lot }) => lot.venueId === venueId && lot.ingredientTag === ingredientTag && lot.unit === unit && lot.expiresDay >= day && lot.quantity > .01)
+    .sort((left, right) => left.lot.expiresDay - right.lot.expiresDay || left.lot.receivedDay - right.lot.receivedDay)
+    .map((item) => item.index);
+  let remaining = requested;
+  let consumed = 0;
+  let cost = 0;
+  for (const index of indices) {
+    if (remaining <= .01) break;
+    const lot = pantryLots[index];
+    if (!lot) continue;
+    const taken = Math.min(lot.quantity, remaining);
+    pantryLots[index] = { ...lot, quantity: roundToOne(lot.quantity - taken) };
+    remaining -= taken;
+    consumed += taken;
+    cost += taken * lot.unitCost;
+  }
+  return {
+    pantryLots: pantryLots.filter((lot) => lot.quantity > .01),
+    consumed: roundToOne(consumed),
+    cost: roundMoney(cost),
+  };
+}
+
+function refreshVenueMenuAvailability(
+  menuItems: HospitalityMenuItemState[],
+  venue: HospitalityVenueState,
+  trade: TradeState,
+  openContainers: HospitalityOpenContainerState[],
+  pantryLots: HospitalityPantryLotState[],
+  day: number,
+): HospitalityMenuItemState[] {
+  return menuItems.map((item) => item.venueId === venue.id ? refreshMenuItemAvailability(item, venue, trade, openContainers, pantryLots, day) : item);
+}
+
+function refreshMenuItemAvailability(
+  item: HospitalityMenuItemState,
+  venue: HospitalityVenueState,
+  trade: TradeState,
+  openContainers: HospitalityOpenContainerState[],
+  pantryLots: HospitalityPantryLotState[],
+  day: number,
+): HospitalityMenuItemState {
+  const portions = availableMenuPortions(item, trade, openContainers, pantryLots, venue.id, day);
+  return {
+    ...cloneMenuItem(item),
+    active: portions > 0,
+    availabilityReason: portions > 0 ? null : menuAvailabilityReason(item, trade, openContainers, pantryLots, venue.id, day),
+  };
+}
+
+function menuAvailabilityReason(
+  item: HospitalityMenuItemState,
+  trade: TradeState,
+  openContainers: HospitalityOpenContainerState[],
+  pantryLots: HospitalityPantryLotState[],
+  venueId: string,
+  day: number,
+): string {
+  for (const ingredient of item.ingredients) {
+    if (ingredient.productId) {
+      const product = trade.products.find((candidate) => candidate.id === ingredient.productId);
+      if (!product) return 'Неизвестный товар';
+      const openMl = openContainers.filter((container) => container.venueId === venueId && container.productId === product.id && container.expiresDay >= day).reduce((sum, container) => sum + container.remainingMl, 0);
+      const shelfUnits = trade.shelves.filter((shelf) => shelf.assetId === venueId.replace('hospitality-venue:', '') && shelf.productId === product.id).reduce((sum, shelf) => sum + shelf.units, 0);
+      if (openMl + shelfUnits * product.packageVolumeLiters * 1000 < ingredient.amount) return `Нет товара: ${product.name}`;
+    }
+    if (ingredient.pantryTag) {
+      const total = pantryLots.filter((lot) => lot.venueId === venueId && lot.ingredientTag === ingredient.pantryTag && lot.unit === ingredient.unit && lot.expiresDay >= day).reduce((sum, lot) => sum + lot.quantity, 0);
+      if (total < ingredient.amount) return `Нет ингредиента: ${pantryDefinition(ingredient.pantryTag)?.name ?? ingredient.pantryTag}`;
+    }
+  }
+  return 'Недостаточно ингредиентов';
+}
+
+function calculateMenuMaterialCost(ingredients: HospitalityMenuIngredientState[], products: TradeProductState[]): number {
+  return roundMoney(ingredients.reduce((sum, ingredient) => {
+    if (ingredient.productId) {
+      const product = products.find((item) => item.id === ingredient.productId);
+      return sum + (product ? product.unitCost * ingredient.amount / Math.max(1, product.packageVolumeLiters * 1000) : 0);
+    }
+    if (ingredient.pantryTag) return sum + ingredient.amount * (pantryDefinition(ingredient.pantryTag)?.unitCost ?? 0);
+    return sum;
+  }, 0));
+}
+
+function cocktailSalePrice(
+  materialCost: number,
+  recipe: CocktailRecipeDefinition,
+  priceMultiplier: number,
+  products: TradeProductState[],
+  ingredients: HospitalityMenuIngredientState[],
+): number {
+  const quality = weightedProductQuality(ingredients, products);
+  const laborFloor = 6.5 + recipe.complexity * 1.15 + recipe.preparationSeconds / 95;
+  const qualityPremium = .9 + quality / 220;
+  return roundMoney(Math.max(laborFloor, materialCost * (3.5 + recipe.complexity * .28)) * priceMultiplier * qualityPremium);
+}
+
+function calculateMenuItemQuality(item: HospitalityMenuItemState, products: TradeProductState[], venue: HospitalityVenueState): number {
+  const ingredientQuality = weightedProductQuality(item.ingredients, products);
+  const execution = venue.serviceQuality - Math.max(0, item.complexity * 10 - venue.workforce.bartenders * 5 - venue.stations * 2);
+  return Math.round(clamp(ingredientQuality * .72 + execution * .28, 20, 98));
+}
+
+function weightedProductQuality(ingredients: HospitalityMenuIngredientState[], products: TradeProductState[]): number {
+  let totalMl = 0;
+  let weighted = 0;
+  for (const ingredient of ingredients) {
+    if (!ingredient.productId) continue;
+    const product = products.find((item) => item.id === ingredient.productId);
+    if (!product) continue;
+    totalMl += ingredient.amount;
+    weighted += product.quality * ingredient.amount;
+  }
+  return totalMl > 0 ? weighted / totalMl : 55;
+}
+
+function effectivePreparationSeconds(item: HospitalityMenuItemState, venue: HospitalityVenueState): number {
+  const skillFactor = clamp(1.18 - venue.serviceQuality / 260 - venue.workforce.bartenders * .018, .62, 1.12);
+  const stationPenalty = venue.stations < Math.max(1, Math.ceil(venue.workforce.bartenders / 2)) ? 1.12 : 1;
+  return Math.max(20, Math.round(item.preparationSeconds * skillFactor * stationPenalty));
+}
+
+function cocktailFitScore(recipe: CocktailRecipeDefinition, concept: HospitalityVenueConcept): number {
+  let score = 10;
+  if (recipe.tags.includes('classic')) score += concept === 'hotel_bar' || concept === 'cocktail_bar' || concept === 'lounge' ? 8 : 2;
+  if (recipe.tags.includes('modern-classic')) score += concept === 'cocktail_bar' || concept === 'nightclub' ? 7 : 3;
+  if (recipe.tags.includes('long') || recipe.tags.includes('spritz')) score += concept === 'nightclub' || concept === 'hotel_bar' ? 7 : 3;
+  if (recipe.tags.includes('spirit-forward')) score += concept === 'lounge' || concept === 'cocktail_bar' ? 7 : 1;
+  if (recipe.tags.includes('tropical') || recipe.tags.includes('fruity')) score += concept === 'nightclub' ? 6 : 2;
+  if (recipe.tags.includes('brunch')) score += concept === 'hotel_bar' || concept === 'restaurant' ? 7 : 1;
+  if (concept === 'nightclub') score += Math.max(0, 5 - recipe.complexity) * 2;
+  if (concept === 'cocktail_bar') score += recipe.complexity * 1.4;
+  return score;
+}
+
+function supportsCocktails(concept: HospitalityVenueConcept): boolean {
+  return concept === 'cocktail_bar' || concept === 'lounge' || concept === 'hotel_bar' || concept === 'nightclub' || concept === 'restaurant';
+}
+
+function cloneMenuItem(item: HospitalityMenuItemState): HospitalityMenuItemState {
+  return {
+    ...item,
+    garnish: [...item.garnish],
+    ingredients: item.ingredients.map((ingredient) => ({ ...ingredient })),
   };
 }
 

@@ -2,6 +2,7 @@ import { advanceDay, type GameState } from './game';
 import { auditKernel } from './kernel';
 import { auditQuality } from './quality';
 import { auditFinancialSystem } from './finance';
+import { pantryDefinition } from '../data/cocktailCatalog';
 import { validateIndustrialProductionState } from './industrialProduction';
 
 export interface ObserverSimulationReport {
@@ -194,6 +195,8 @@ export function runObserverSimulation(initial: GameState, days: number, options:
   if (hospitalityVenueIds.size !== ecosystem.hospitality.venues.length) violations.push('Дублирующиеся заведения hospitality-сектора');
   if (ecosystem.hospitality.venues.some((venue) => !assetIds.has(venue.assetId))) violations.push('Заведение ссылается на неизвестный объект');
   if (ecosystem.hospitality.openContainers.some((container) => container.remainingMl < 0 || container.remainingMl > container.initialMl + .01)) violations.push('Некорректный остаток открытой бутылки или кега');
+  if (ecosystem.hospitality.pantryLots.some((lot) => !Number.isFinite(lot.quantity) || lot.quantity < 0)) violations.push('Некорректный остаток ингредиента кладовой');
+  if (ecosystem.hospitality.pantryLots.some((lot) => { const definition = pantryDefinition(lot.ingredientTag); return !definition || definition.unit !== lot.unit; })) violations.push('Кладовая ссылается на неизвестный ингредиент или единицу измерения');
   if (ecosystem.hospitality.menuItems.some((item) => item.ingredients.some((ingredient) => ingredient.productId && !ecosystem.trade.products.some((product) => product.id === ingredient.productId)))) violations.push('Позиция меню ссылается на неизвестный продукт');
   if (ecosystem.hospitality.shiftReports.some((report) => report.guests < 0 || report.orders < 0 || report.revenue < 0 || report.costOfGoods < 0)) violations.push('Некорректный отчёт смены заведения');
   return {

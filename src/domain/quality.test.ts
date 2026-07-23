@@ -73,7 +73,7 @@ describe('quality, certification and recalls', () => {
     expect(productQualitySummary(state.quality, certifiedProduct.id).certificateCount).toBeGreaterThan(0);
   });
 
-  it('мигрирует schemaVersion 18 в quality ecosystem schemaVersion 23', () => {
+  it('мигрирует schemaVersion 18 в quality ecosystem schemaVersion 24', () => {
     const property = properties[0];
     if (!property) throw new Error('property missing');
     const current = startCompany({ companyName: 'Legacy Quality', mode: 'standard', countryId: 'germany', regionId: property.regionId, property }, new Date('2026-01-01T00:00:00.000Z'));
@@ -82,7 +82,7 @@ describe('quality, certification and recalls', () => {
     const ecosystem = legacy.ecosystem as Record<string, unknown>;
     delete ecosystem.quality;
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(23);
+    expect(migrated.schemaVersion).toBe(24);
     expect(migrated.ecosystem?.quality.laboratories.length).toBe(3);
     expect(migrated.ecosystem?.organizations.some((organization) => organization.kind === 'service')).toBe(true);
   });

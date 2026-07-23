@@ -22,7 +22,8 @@ describe('ecosystem kernel', () => {
   it('validates the extensible beverage and cocktail catalog', () => {
     expect(validateBeverageCatalog()).toEqual([]);
     expect(beverageCategories.length).toBeGreaterThanOrEqual(20);
-    expect(cocktailRecipes.every((recipe) => recipe.ingredients.length > 0)).toBe(true);
+    expect(cocktailRecipes).toHaveLength(60);
+    expect(cocktailRecipes.every((recipe) => recipe.ingredients.length > 1 && recipe.preparationSeconds >= 20 && recipe.glassware.length > 0)).toBe(true);
   });
 
   it('creates one registry and maps legacy products to generic beverage specifications', () => {

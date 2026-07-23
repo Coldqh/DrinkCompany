@@ -1,7 +1,10 @@
+import { validateCocktailCatalog } from './cocktailCatalog';
+export { cocktailRecipes } from './cocktailCatalog';
+export type { CocktailRecipeDefinition, ServeMethod } from './cocktailCatalog';
+
 export type BeverageCategoryId = string;
 export type ProcessStageId = string;
 export type IngredientRole = 'fermentable' | 'botanical' | 'fruit' | 'spirit_base' | 'sweetener' | 'acid' | 'bittering' | 'mixer' | 'water' | 'packaging';
-export type ServeMethod = 'build' | 'stir' | 'shake' | 'blend' | 'roll' | 'layer' | 'throw';
 
 export interface BeverageCategoryDefinition {
   id: BeverageCategoryId;
@@ -52,23 +55,6 @@ export interface BeverageBlueprintDefinition {
   }>;
   outputUnit: 'l' | 'bottle' | 'can' | 'keg';
   shelfLifeDays: number | null;
-}
-
-export interface CocktailRecipeDefinition {
-  id: string;
-  name: string;
-  method: ServeMethod;
-  glassware: string;
-  ice: 'none' | 'cube' | 'large_cube' | 'crushed' | 'up';
-  garnish: string[];
-  ingredients: Array<{
-    amountMl: number;
-    productId?: string;
-    categoryId?: BeverageCategoryId;
-    ingredientTag?: string;
-    optional?: boolean;
-  }>;
-  tags: string[];
 }
 
 export const processStages: ProcessStageDefinition[] = [
@@ -122,15 +108,6 @@ export const beverageBlueprints: BeverageBlueprintDefinition[] = beverageCategor
   shelfLifeDays: category.canAge ? null : 365,
 }));
 
-export const cocktailRecipes: CocktailRecipeDefinition[] = [
-  { id: 'old-fashioned', name: 'Old Fashioned', method: 'stir', glassware: 'rocks', ice: 'large_cube', garnish: ['orange peel'], ingredients: [{ amountMl: 60, categoryId: 'whisky' }, { amountMl: 8, ingredientTag: 'sugar' }, { amountMl: 2, categoryId: 'amaro_bitter' }], tags: ['classic', 'spirit-forward'] },
-  { id: 'negroni', name: 'Negroni', method: 'stir', glassware: 'rocks', ice: 'large_cube', garnish: ['orange peel'], ingredients: [{ amountMl: 30, categoryId: 'gin' }, { amountMl: 30, categoryId: 'vermouth_aperitif' }, { amountMl: 30, categoryId: 'amaro_bitter' }], tags: ['classic', 'bitter'] },
-  { id: 'dry-martini', name: 'Dry Martini', method: 'stir', glassware: 'martini', ice: 'up', garnish: ['olive', 'lemon twist'], ingredients: [{ amountMl: 60, categoryId: 'gin' }, { amountMl: 10, categoryId: 'vermouth_aperitif' }], tags: ['classic', 'dry'] },
-  { id: 'daiquiri', name: 'Daiquiri', method: 'shake', glassware: 'coupe', ice: 'up', garnish: ['lime'], ingredients: [{ amountMl: 60, categoryId: 'rum' }, { amountMl: 25, ingredientTag: 'citrus' }, { amountMl: 15, ingredientTag: 'sugar' }], tags: ['classic', 'sour'] },
-  { id: 'margarita', name: 'Margarita', method: 'shake', glassware: 'coupe', ice: 'up', garnish: ['salt', 'lime'], ingredients: [{ amountMl: 50, categoryId: 'agave_spirit' }, { amountMl: 25, categoryId: 'liqueur' }, { amountMl: 25, ingredientTag: 'citrus' }], tags: ['classic', 'sour'] },
-  { id: 'highball', name: 'Highball', method: 'build', glassware: 'highball', ice: 'cube', garnish: ['lemon'], ingredients: [{ amountMl: 45, categoryId: 'whisky' }, { amountMl: 120, categoryId: 'mixer' }], tags: ['classic', 'long'] },
-];
-
 export function validateBeverageCatalog(): string[] {
   const errors: string[] = [];
   const unique = (label: string, ids: string[]) => {
@@ -143,11 +120,10 @@ export function validateBeverageCatalog(): string[] {
   unique('category', beverageCategories.map((item) => item.id));
   unique('stage', processStages.map((item) => item.id));
   unique('blueprint', beverageBlueprints.map((item) => item.id));
-  unique('cocktail', cocktailRecipes.map((item) => item.id));
   const stageIds = new Set(processStages.map((item) => item.id));
   const categoryIds = new Set(beverageCategories.map((item) => item.id));
   for (const category of beverageCategories) for (const stageId of category.processStageIds) if (!stageIds.has(stageId)) errors.push(`${category.id}: неизвестный этап ${stageId}`);
   for (const blueprint of beverageBlueprints) if (!categoryIds.has(blueprint.categoryId)) errors.push(`${blueprint.id}: неизвестная категория ${blueprint.categoryId}`);
-  for (const cocktail of cocktailRecipes) for (const ingredient of cocktail.ingredients) if (ingredient.categoryId && !categoryIds.has(ingredient.categoryId)) errors.push(`${cocktail.id}: неизвестная категория ${ingredient.categoryId}`);
+  errors.push(...validateCocktailCatalog(categoryIds));
   return errors;
 }
