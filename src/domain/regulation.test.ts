@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { advanceRegulationDay, calculateExcise, createRegulationState } from './regulation';
 import type { OrganizationState, WorldAssetState } from './ecosystem';
 import type { TradeState } from './trade';
+import { createIndustrialProductionState } from './industrialProduction';
 import { createEcosystemKernel, synchronizeKernelFromRegulation } from './kernel';
 
 function organization(id: string, kind: OrganizationState['kind'], countryId: string, cash = 20_000): OrganizationState {
@@ -30,7 +31,7 @@ function organization(id: string, kind: OrganizationState['kind'], countryId: st
 
 function emptyTrade(): TradeState {
   return {
-    inventory: [], products: [], batches: [], contracts: [], shipments: [], shelves: [], operations: [],
+    inventory: [], products: [], batches: [], contracts: [], shipments: [], shelves: [], operations: [], industrial: createIndustrialProductionState(),
     nextInventoryNumber: 1, nextProductNumber: 1, nextBatchNumber: 1, nextContractNumber: 1,
     nextShipmentNumber: 1, nextShelfNumber: 1, nextOperationNumber: 1,
   };

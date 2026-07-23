@@ -2,6 +2,7 @@ import { advanceDay, type GameState } from './game';
 import { auditKernel } from './kernel';
 import { auditQuality } from './quality';
 import { auditFinancialSystem } from './finance';
+import { validateIndustrialProductionState } from './industrialProduction';
 
 export interface ObserverSimulationReport {
   daysSimulated: number;
@@ -46,6 +47,11 @@ export interface ObserverSimulationReport {
   packagingJobCount: number;
   packagingReturnCount: number;
   packagingComponentUnits: number;
+  industrialPlanCount: number;
+  industrialRunCount: number;
+  intermediateLotCount: number;
+  maturationLotCount: number;
+  blendRecipeCount: number;
   finalPlayerCash: number;
   violations: string[];
 }
@@ -129,6 +135,11 @@ export function runObserverSimulation(initial: GameState, days: number, options:
         packagingJobCount: 0,
         packagingReturnCount: 0,
         packagingComponentUnits: 0,
+        industrialPlanCount: 0,
+        industrialRunCount: 0,
+        intermediateLotCount: 0,
+        maturationLotCount: 0,
+        blendRecipeCount: 0,
         finalPlayerCash: state.finance.cash,
         violations: state.phase === 'operating' ? ['Operating state has no ecosystem'] : [],
       },
@@ -162,6 +173,7 @@ export function runObserverSimulation(initial: GameState, days: number, options:
   if (ecosystem.packaging.materialStocks.some((stock) => stock.quantity < 0)) violations.push('Отрицательный запас промышленного материала упаковки');
   if (ecosystem.packaging.jobs.some((job) => job.quantity <= 0 || job.materialUsed < 0)) violations.push('Некорректное производственное задание упаковки');
   if (ecosystem.packaging.returns.some((item) => item.collectedUnits < 0 || item.damagedUnits < 0)) violations.push('Некорректный цикл возврата тары');
+  violations.push(...validateIndustrialProductionState(ecosystem.trade.industrial));
   const licenseIds = new Set(ecosystem.regulation.licenses.map((license) => license.id));
   if (licenseIds.size !== ecosystem.regulation.licenses.length) violations.push('Дублирующиеся регуляторные лицензии');
   return {
@@ -209,6 +221,11 @@ export function runObserverSimulation(initial: GameState, days: number, options:
       packagingJobCount: ecosystem.packaging.jobs.length,
       packagingReturnCount: ecosystem.packaging.returns.length,
       packagingComponentUnits: ecosystem.trade.inventory.filter((lot) => lot.commodityKind === 'packaging').reduce((sum, lot) => sum + lot.quantity, 0),
+      industrialPlanCount: ecosystem.trade.industrial.plans.length,
+      industrialRunCount: ecosystem.trade.industrial.runs.length,
+      intermediateLotCount: ecosystem.trade.industrial.intermediateLots.length,
+      maturationLotCount: ecosystem.trade.industrial.maturationLots.length,
+      blendRecipeCount: ecosystem.trade.industrial.blendRecipes.length,
       finalPlayerCash: state.finance.cash,
       violations,
     },

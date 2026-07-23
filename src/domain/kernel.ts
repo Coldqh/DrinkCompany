@@ -3,7 +3,7 @@ import type { FinancialSystemState } from './finance';
 import type { PackagingState } from './packaging';
 import { beverageBlueprints, type BeverageCategoryId } from '../data/beverageCatalog';
 
-export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment' | 'authority' | 'license' | 'inspection' | 'tax_obligation' | 'primary_site' | 'harvest' | 'vehicle' | 'route' | 'freight_job' | 'quality_lab' | 'quality_sample' | 'quality_certificate' | 'quality_incident' | 'recall' | 'bank_account' | 'invoice' | 'credit_facility' | 'loan' | 'insurance_policy' | 'financial_statement' | 'packaging_job' | 'packaging_return';
+export type KernelEntityKind = 'organization' | 'asset' | 'product' | 'lot' | 'contract' | 'shipment' | 'serve_recipe' | 'region' | 'consumer_segment' | 'authority' | 'license' | 'inspection' | 'tax_obligation' | 'primary_site' | 'harvest' | 'vehicle' | 'route' | 'freight_job' | 'quality_lab' | 'quality_sample' | 'quality_certificate' | 'quality_incident' | 'recall' | 'bank_account' | 'invoice' | 'credit_facility' | 'loan' | 'insurance_policy' | 'financial_statement' | 'packaging_job' | 'packaging_return' | 'process_plan' | 'process_run' | 'intermediate_lot' | 'maturation_lot' | 'blend_recipe';
 export type LedgerAccount = `org:${string}:cash` | `org:${string}:revenue` | `org:${string}:expense` | `org:${string}:receivable` | `org:${string}:payable` | `org:${string}:inventory` | `org:${string}:debt` | `system:${string}`;
 export type ScheduleCadence = 'daily' | 'weekly' | 'monthly' | 'seasonal' | 'annual' | 'once';
 
@@ -23,6 +23,13 @@ export interface KernelTradeSnapshot {
   shelves?: KernelShelfInput[];
   operations?: KernelOperationInput[];
   batches?: Array<{ id: string; producerOrganizationId: string; productId: string; ingredientLotIds: string[]; startDay: number }>;
+  industrial?: {
+    plans: Array<{ id: string; batchId: string; producerOrganizationId: string; productId: string; status: string }>;
+    runs: Array<{ id: string; producerOrganizationId: string; productId: string; stageId: string; status: string }>;
+    intermediateLots: Array<{ id: string; ownerOrganizationId: string; productId: string; batchId: string; sourceTradeLotIds: string[]; sourceIntermediateLotIds: string[]; createdDay: number }>;
+    maturationLots: Array<{ id: string; producerOrganizationId: string; productId: string; sourceIntermediateLotId: string; enteredDay: number }>;
+    blendRecipes: Array<{ id: string; producerOrganizationId: string; productId: string; name: string }>;
+  };
 }
 
 export interface KernelEntityRef {
@@ -32,7 +39,7 @@ export interface KernelEntityRef {
   ownerOrganizationId: string | null;
   countryId: string | null;
   regionId: string | null;
-  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand' | 'regulation' | 'primary' | 'logistics' | 'quality' | 'finance' | 'packaging';
+  sourceModule: 'ecosystem' | 'trade' | 'catalog' | 'demand' | 'regulation' | 'primary' | 'logistics' | 'quality' | 'finance' | 'packaging' | 'industrial';
 }
 
 export interface KernelProductSpecification {
@@ -74,7 +81,7 @@ export interface KernelGoodsEntry {
 
 export interface KernelTraceNode {
   id: string;
-  entityKind: 'harvest_lot' | 'ingredient_lot' | 'production_batch' | 'bulk_lot' | 'package_lot' | 'shipment' | 'sale';
+  entityKind: 'harvest_lot' | 'ingredient_lot' | 'production_batch' | 'bulk_lot' | 'maturation_lot' | 'package_lot' | 'shipment' | 'sale';
   entityId: string;
   parentNodeIds: string[];
   organizationId: string;
@@ -211,7 +218,7 @@ export function createEcosystemKernel(input: KernelCreateInput): EcosystemKernel
   const seed = hashSeed(input.seedText);
   const entities = buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction, input.logistics, input.quality, input.financials, input.packaging);
   const productSpecifications = input.trade.products.map((product) => createProductSpecification(product, input.day));
-  const traceability = mergeTraceability([], input.trade.inventory, input.primaryProduction?.rawLots ?? [], input.trade.batches ?? [], input.day);
+  const traceability = mergeTraceability([], input.trade.inventory, input.primaryProduction?.rawLots ?? [], input.trade.batches ?? [], input.day, input.trade.industrial);
   return {
     kernelVersion: 1,
     seed,
@@ -235,7 +242,7 @@ export function createEcosystemKernel(input: KernelCreateInput): EcosystemKernel
 
 export function normalizeEcosystemKernel(kernel: EcosystemKernelState | undefined, input: KernelCreateInput): EcosystemKernelState {
   if (!kernel || kernel.kernelVersion !== 1) return createEcosystemKernel(input);
-  const traceability = mergeTraceability(kernel.traceability ?? [], input.trade.inventory, input.primaryProduction?.rawLots ?? [], input.trade.batches ?? [], input.day);
+  const traceability = mergeTraceability(kernel.traceability ?? [], input.trade.inventory, input.primaryProduction?.rawLots ?? [], input.trade.batches ?? [], input.day, input.trade.industrial);
   const normalized: EcosystemKernelState = {
     ...kernel,
     entities: buildEntityRegistry(input.organizations, input.assets, input.trade, input.demand, input.regulation, input.primaryProduction, input.logistics, input.quality, input.financials, input.packaging),
@@ -341,7 +348,7 @@ export function synchronizeKernelFromTrade(kernel: EcosystemKernelState, trade: 
     const parentNodeIds = (shelf.soldLotAllocationsToday ?? shelf.lotAllocations ?? []).map((allocation) => next.traceability.find((node) => node.entityId === allocation.lotId)?.id).filter((id): id is string => Boolean(id));
     if (!next.traceability.some((node) => node.entityKind === 'sale' && node.entityId === sourceId)) next = addTraceNode(next, { entityKind: 'sale', entityId: sourceId, parentNodeIds, organizationId: shelf.supplierOrganizationId, createdDay: day });
   }
-  return { ...next, traceability: mergeTraceability(next.traceability, trade.inventory, [], trade.batches ?? [], day) };
+  return { ...next, traceability: mergeTraceability(next.traceability, trade.inventory, [], trade.batches ?? [], day, trade.industrial) };
 }
 
 
@@ -625,6 +632,8 @@ export function auditKernel(kernel: EcosystemKernelState, trade: KernelTradeSnap
     if (!ids.has(contract.sellerOrganizationId)) violations.push(`Контракт ${contract.id}: неизвестный продавец`);
     if (!ids.has(contract.buyerOrganizationId)) violations.push(`Контракт ${contract.id}: неизвестный покупатель`);
   }
+  for (const lot of trade.industrial?.intermediateLots ?? []) if (!ids.has(lot.ownerOrganizationId)) violations.push(`Промежуточный лот ${lot.id}: неизвестный владелец`);
+  for (const plan of trade.industrial?.plans ?? []) if (!ids.has(plan.producerOrganizationId)) violations.push(`Процесс ${plan.id}: неизвестный производитель`);
   for (const entry of kernel.moneyLedger) if (entry.amount <= 0) violations.push(`Некорректная денежная проводка: ${entry.id}`);
   for (const entry of kernel.goodsLedger) if (entry.quantity <= 0) violations.push(`Некорректная товарная проводка: ${entry.id}`);
   return {
@@ -670,6 +679,11 @@ function buildEntityRegistry(organizations: KernelOrganizationInput[], assets: K
   for (const product of trade.products) entities.push({ id: product.id, kind: 'product', label: product.name, ownerOrganizationId: product.producerOrganizationId, countryId: null, regionId: null, sourceModule: 'trade' });
   for (const lot of trade.inventory) entities.push({ id: lot.id, kind: 'lot', label: lot.commodityId, ownerOrganizationId: lot.organizationId, countryId: null, regionId: null, sourceModule: 'trade' });
   for (const contract of trade.contracts) entities.push({ id: contract.id, kind: 'contract', label: `${contract.commodityKind}:${contract.commodityId}`, ownerOrganizationId: contract.sellerOrganizationId, countryId: null, regionId: null, sourceModule: 'trade' });
+  for (const plan of (trade.industrial?.plans ?? []).filter((item) => item.status !== 'complete').slice(-120)) entities.push({ id: plan.id, kind: 'process_plan', label: `${plan.productId}:${plan.status}`, ownerOrganizationId: plan.producerOrganizationId, countryId: null, regionId: null, sourceModule: 'industrial' });
+  for (const run of (trade.industrial?.runs ?? []).filter((item) => item.status !== 'complete').slice(-120)) entities.push({ id: run.id, kind: 'process_run', label: `${run.stageId}:${run.status}`, ownerOrganizationId: run.producerOrganizationId, countryId: null, regionId: null, sourceModule: 'industrial' });
+  for (const lot of (trade.industrial?.intermediateLots ?? []).filter((item) => !('status' in item) || item.status !== 'consumed').slice(-240)) entities.push({ id: lot.id, kind: 'intermediate_lot', label: lot.productId, ownerOrganizationId: lot.ownerOrganizationId, countryId: null, regionId: null, sourceModule: 'industrial' });
+  for (const lot of (trade.industrial?.maturationLots ?? []).filter((item) => !('status' in item) || item.status !== 'drained').slice(-120)) entities.push({ id: lot.id, kind: 'maturation_lot', label: lot.productId, ownerOrganizationId: lot.producerOrganizationId, countryId: null, regionId: null, sourceModule: 'industrial' });
+  for (const recipe of (trade.industrial?.blendRecipes ?? []).slice(-160)) entities.push({ id: recipe.id, kind: 'blend_recipe', label: recipe.name, ownerOrganizationId: recipe.producerOrganizationId, countryId: null, regionId: null, sourceModule: 'industrial' });
   for (const region of demand?.regions ?? []) {
     entities.push({ id: `region:${region.regionId}`, kind: 'region', label: region.regionId, ownerOrganizationId: null, countryId: region.countryId, regionId: region.regionId, sourceModule: 'demand' });
     for (const segment of region.segments) entities.push({ id: segment.id, kind: 'consumer_segment', label: segment.name, ownerOrganizationId: null, countryId: region.countryId, regionId: region.regionId, sourceModule: 'demand' });
@@ -711,7 +725,7 @@ function createProductSpecification(product: KernelProductInput, day: number): K
   const categoryId = normalizeCategoryId(product.beverageCategoryId ?? product.family);
   const blueprint = beverageBlueprints.find((item) => item.categoryId === categoryId) ?? beverageBlueprints[0];
   if (!blueprint) throw new Error('Каталог напитков пуст');
-  return { productId: product.id, blueprintId: blueprint.id, beverageCategoryId: categoryId, producerOrganizationId: product.producerOrganizationId, revision: 1, createdDay: day, attributes: { alcoholByVolume: product.alcoholByVolume ?? 0, packageVolumeLiters: product.packageVolumeLiters ?? .5, packagingProfileId: product.packagingProfileId ?? 'profile-returnable-500' } };
+  return { productId: product.id, blueprintId: blueprint.id, beverageCategoryId: categoryId, producerOrganizationId: product.producerOrganizationId, revision: 1, createdDay: day, attributes: { alcoholByVolume: product.alcoholByVolume ?? 0, packageVolumeLiters: product.packageVolumeLiters ?? .5, packagingProfileId: product.packagingProfileId ?? 'profile-returnable-500', productionBlueprintId: (product as KernelProductInput & { productionBlueprintId?: string }).productionBlueprintId ?? blueprint.id } };
 }
 
 function mergeProductSpecifications(current: KernelProductSpecification[], products: KernelProductInput[], day: number): KernelProductSpecification[] {
@@ -732,7 +746,7 @@ function nextTraceNumber(nodes: KernelTraceNode[]): number {
   return nodes.reduce((max, node) => Math.max(max, Number(node.id.split('-').at(-1)) || 0), 0) + 1;
 }
 
-function mergeTraceability(current: KernelTraceNode[], lots: KernelLotInput[], rawLots: KernelPrimarySnapshot['rawLots'], batches: NonNullable<KernelTradeSnapshot['batches']>, day: number): KernelTraceNode[] {
+function mergeTraceability(current: KernelTraceNode[], lots: KernelLotInput[], rawLots: KernelPrimarySnapshot['rawLots'], batches: NonNullable<KernelTradeSnapshot['batches']>, day: number, industrial?: KernelTradeSnapshot['industrial']): KernelTraceNode[] {
   const nodes = current.map((node) => ({ ...node, parentNodeIds: [...node.parentNodeIds] }));
   const byEntity = new Map(nodes.map((node) => [node.entityId, node]));
   let nextNumber = nodes.reduce((max, node) => Math.max(max, Number(node.id.split('-').at(-1)) || 0), 0) + 1;
@@ -751,6 +765,14 @@ function mergeTraceability(current: KernelTraceNode[], lots: KernelLotInput[], r
   for (const batch of batches) {
     const parents = batch.ingredientLotIds.map((lotId) => byEntity.get(lotId)?.id).filter((id): id is string => Boolean(id));
     add('production_batch', batch.id, parents, batch.producerOrganizationId, batch.startDay);
+  }
+  for (const lot of industrial?.intermediateLots ?? []) {
+    const parents = [...lot.sourceTradeLotIds, ...lot.sourceIntermediateLotIds].map((lotId) => byEntity.get(lotId)?.id).filter((id): id is string => Boolean(id));
+    add('bulk_lot', lot.id, parents, lot.ownerOrganizationId, lot.createdDay);
+  }
+  for (const lot of industrial?.maturationLots ?? []) {
+    const parent = byEntity.get(lot.sourceIntermediateLotId)?.id;
+    add('maturation_lot', lot.id, parent ? [parent] : [], lot.producerOrganizationId, lot.enteredDay);
   }
   for (const lot of lots) {
     const parents = [

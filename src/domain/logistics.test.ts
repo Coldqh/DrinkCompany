@@ -58,7 +58,7 @@ describe('logistics and distribution ecosystem', () => {
     expect(crossBorderRoute?.baseTransitDays).toBeGreaterThan(1);
   });
 
-  it('мигрирует schemaVersion 17 в логистическое ядро schemaVersion 21', () => {
+  it('мигрирует schemaVersion 17 в логистическое ядро schemaVersion 22', () => {
     const property = properties[0];
     if (!property) throw new Error('property missing');
     const current = startCompany({ companyName: 'Legacy Logistics', mode: 'standard', countryId: 'germany', regionId: property.regionId, property }, new Date('2026-01-01T00:00:00.000Z'));
@@ -67,7 +67,7 @@ describe('logistics and distribution ecosystem', () => {
     const ecosystem = legacy.ecosystem as Record<string, unknown>;
     delete ecosystem.logistics;
     const migrated = migrateGameState(legacy);
-    expect(migrated.schemaVersion).toBe(21);
+    expect(migrated.schemaVersion).toBe(22);
     expect(migrated.ecosystem?.organizations.some((organization) => organization.kind === 'carrier')).toBe(true);
     expect(migrated.ecosystem?.logistics.fleet.length).toBeGreaterThan(0);
   });

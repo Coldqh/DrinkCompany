@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { advanceFinancialDay, auditFinancialSystem, createFinancialSystem, financialPosition } from './finance';
 import type { OrganizationState, WorldAssetState } from './ecosystem';
 import type { TradeState } from './trade';
+import { createIndustrialProductionState } from './industrialProduction';
 
 function organization(id: string, kind: OrganizationState['kind'], cash: number): OrganizationState {
   return {
@@ -42,7 +43,7 @@ function trade(status: 'in_transit' | 'delivered'): TradeState {
       buyerAssetId: null, commodityKind: 'ingredient', commodityId: 'malt', quantity: 10, unitPrice: 10, departDay: 1,
       arrivalDay: 2, status, note: '', lotAllocations: [],
     }],
-    shelves: [], operations: [],
+    shelves: [], operations: [], industrial: createIndustrialProductionState(),
     nextInventoryNumber: 1, nextProductNumber: 1, nextBatchNumber: 1, nextContractNumber: 2, nextShipmentNumber: 2,
     nextShelfNumber: 1, nextOperationNumber: 1,
   };

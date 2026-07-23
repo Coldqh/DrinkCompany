@@ -1,5 +1,7 @@
 import { ingredients, supplierOffers, type IngredientUnit } from '../data/supplyCatalog';
-import type { BeverageCategoryId } from '../data/beverageCatalog';
+import type { BeverageCategoryId, ProcessStageId } from '../data/beverageCatalog';
+import { industrialBlueprintForCategory } from '../data/industrialProcessCatalog';
+import { advanceIndustrialProductionDay, createIndustrialProductionState, normalizeIndustrialProductionState, startIndustrialBatch, type IndustrialProductionState } from './industrialProduction';
 import { packagingComponent, packagingProfileForCategory, packagingRequirements } from '../data/packagingCatalog';
 import type { OrganizationState, WorldAssetState } from './ecosystem';
 import { calculateShelfDemand, recordConsumerPurchase, type DemandState } from './demand';
@@ -56,6 +58,9 @@ export interface TradeProductState {
   slowDays: number;
   stockoutDays: number;
   createdDay: number;
+  productionBlueprintId?: string;
+  vintageYear?: number | null;
+  ageStatementMonths?: number | null;
 }
 
 export interface TradeProductionBatchState {
@@ -71,6 +76,8 @@ export interface TradeProductionBatchState {
   packagingLotIds?: string[];
   cost: number;
   issue: string | null;
+  industrialPlanId?: string | null;
+  currentStageId?: ProcessStageId | null;
 }
 
 export interface TradeContractState {
@@ -144,6 +151,7 @@ export interface TradeState {
   shipments: TradeShipmentState[];
   shelves: TradeShelfListingState[];
   operations: TradeOperationState[];
+  industrial: IndustrialProductionState;
   nextInventoryNumber: number;
   nextProductNumber: number;
   nextBatchNumber: number;
@@ -220,7 +228,7 @@ export function createTradeState(organizations: OrganizationState[], assets: Wor
       expiresDay: day + 260,
     });
 
-    for (const ingredientId of ingredientRequirements(family).map((item) => item.ingredientId)) {
+    for (const ingredientId of ingredientRequirementsForCategory(product.beverageCategoryId ?? legacyCategoryForFamily(family), family).map((item) => item.ingredientId)) {
       const seller = supplierForIngredient(ingredientId, supplierOrganizations);
       const offer = seller ? offerForSupplierIngredient(seller.id, ingredientId) : null;
       if (!seller || !offer) continue;
@@ -341,6 +349,7 @@ export function createTradeState(organizations: OrganizationState[], assets: Wor
     shipments: [],
     shelves,
     operations: [],
+    industrial: createIndustrialProductionState(),
     nextInventoryNumber,
     nextProductNumber,
     nextBatchNumber: 1,
@@ -516,21 +525,39 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
     };
   });
 
-  // 3. Завершение производственных партий.
-  trade.batches = trade.batches.map((batch) => {
-    if (batch.status !== 'producing' || batch.readyDay > day) return batch;
-    const product = trade.products.find((item) => item.id === batch.productId);
-    if (!product) return { ...batch, status: 'blocked', issue: 'Продукт больше не существует' };
-    addInventory(trade, batch.producerOrganizationId, 'product', product.id, batch.plannedUnits, product.unitCost, batch.producerOrganizationId, day, {
-      forceNew: true,
-      sourceLotIds: [...batch.ingredientLotIds, ...(batch.packagingLotIds ?? [])],
-      productionBatchId: batch.id,
-      lotCode: `PK-${product.id}-${batch.id}`,
+  // 3. Технологические цепочки: промежуточные лоты, выдержка, купажи и розлив.
+  const industrialAdvance = advanceIndustrialProductionDay(trade.industrial, trade.batches, trade.products, day);
+  trade.industrial = industrialAdvance.industrial;
+  trade.batches = industrialAdvance.batches;
+  events.push(...industrialAdvance.events);
+  if (industrialAdvance.completedBatchIds.length > 0) {
+    trade.batches = trade.batches.map((batch) => {
+      if (!industrialAdvance.completedBatchIds.includes(batch.id)) return batch;
+      const product = trade.products.find((item) => item.id === batch.productId);
+      if (!product) return { ...batch, status: 'blocked', issue: 'Продукт больше не существует' };
+      const plan = trade.industrial.plans.find((item) => item.batchId === batch.id);
+      const actualUnits = plan
+        ? Math.max(0, Math.min(batch.plannedUnits, Math.floor(plan.currentVolumeLiters / Math.max(.05, product.packageVolumeLiters))))
+        : batch.plannedUnits;
+      if (actualUnits <= 0) return { ...batch, status: 'blocked', issue: 'После технологических потерь не осталось объёма для розлива' };
+      addInventory(trade, batch.producerOrganizationId, 'product', product.id, actualUnits, product.unitCost, batch.producerOrganizationId, day, {
+        forceNew: true,
+        sourceLotIds: plan?.intermediateLotIds.length ? plan.intermediateLotIds : [...batch.ingredientLotIds, ...(batch.packagingLotIds ?? [])],
+        productionBatchId: batch.id,
+        lotCode: `PK-${product.id}-${batch.id}`,
+      });
+      product.totalProduced += actualUnits;
+      if (plan) {
+        product.quality = Math.round((product.quality * .65) + (plan.currentQuality * .35));
+        product.productionBlueprintId = plan.blueprintId;
+        const maturation = trade.industrial.maturationLots.filter((item) => item.planId === plan.id);
+        if (maturation.length > 0) product.ageStatementMonths = Math.max(product.ageStatementMonths ?? 0, Math.floor(Math.max(...maturation.map((item) => item.ageDays)) / 30));
+        if (['still_wine', 'sparkling_wine', 'fortified_wine', 'brandy', 'sake', 'mead'].includes(plan.categoryId)) product.vintageYear = 2026 + Math.floor(Math.max(0, plan.startDay - 1) / 365);
+      }
+      record('production', batch.producerOrganizationId, null, null, `Готова партия ${product.name}`, `${actualUnits} единиц разлиты после технологических потерь из плановых ${batch.plannedUnits}.`, batch.cost);
+      return { ...batch, status: 'ready', producedUnits: actualUnits, issue: null, currentStageId: 'package' };
     });
-    product.totalProduced += batch.plannedUnits;
-    record('production', batch.producerOrganizationId, null, null, `Готова партия ${product.name}`, `${batch.plannedUnits} упакованных единиц поступили на склад производителя.`, batch.cost);
-    return { ...batch, status: 'ready', producedUnits: batch.plannedUnits, issue: null };
-  });
+  }
 
   // 4. Планирование новых партий и реальное списание сырья.
   for (const producer of nextOrganizations.filter((organization) => organization.kind === 'producer' && organization.status !== 'acquired')) {
@@ -541,7 +568,7 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
     const shelfDemand = trade.shelves.filter((item) => item.productId === product.id).reduce((sum, item) => sum + item.unitsSoldToday, 0);
     if (activeBatch || stock > Math.max(180, shelfDemand * 12)) continue;
     const plannedUnits = 180 + hash(`${producer.id}-${day}`) % 181;
-    const requirements = ingredientRequirements(product.family).map((item) => ({ ...item, quantity: roundQuantity(item.quantity * plannedUnits / 240) }));
+    const requirements = ingredientRequirementsForCategory(product.beverageCategoryId ?? legacyCategoryForFamily(product.family), product.family).map((item) => ({ ...item, quantity: roundQuantity(item.quantity * plannedUnits / 240) }));
     const packageNeeds = packagingRequirements(product.packagingProfileId ?? packagingProfileForCategory(product.beverageCategoryId ?? legacyCategoryForFamily(product.family)).id, plannedUnits);
     const missing = requirements.filter((requirement) => inventoryQuantity(trade, producer.id, 'ingredient', requirement.ingredientId) < requirement.quantity);
     const missingPackaging = packageNeeds.filter((requirement) => inventoryQuantity(trade, producer.id, 'packaging', requirement.componentId) < requirement.quantity);
@@ -568,6 +595,8 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
           packagingLotIds: [],
           cost: 0,
           issue,
+          industrialPlanId: null,
+          currentStageId: null,
         });
         record('shortage', producer.id, null, null, `${producer.name} остановила запуск`, `Не хватает ресурсов для ${product.name}: ${missingLabels.join(', ')}.`);
         events.push({ tone: 'warning', title: `${producer.name}: дефицит ресурсов`, detail: `Партия ${product.name} не запущена.` });
@@ -589,21 +618,29 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
     }
     addMoneyDelta(costs, producer.id, batchCost * .18);
     trade.batches = trade.batches.filter((batch) => !(batch.producerOrganizationId === producer.id && batch.status === 'blocked'));
-    trade.batches.push({
+    const batch: TradeProductionBatchState = {
       id: `trade-batch-${trade.nextBatchNumber++}`,
       producerOrganizationId: producer.id,
       productId: product.id,
       status: 'producing',
       startDay: day,
-      readyDay: day + productionDays(product.family),
+      readyDay: day + 1,
       plannedUnits,
       producedUnits: 0,
       ingredientLotIds: consumedLotIds,
       packagingLotIds,
       cost: roundMoney(batchCost),
       issue: null,
-    });
-    record('production', producer.id, null, null, `Запущена партия ${product.name}`, `${plannedUnits} упакованных единиц будут готовы на ${day + productionDays(product.family)}-й день.`, batchCost);
+      industrialPlanId: null,
+      currentStageId: null,
+    };
+    const started = startIndustrialBatch(trade.industrial, batch, product, day);
+    trade.industrial = started.industrial;
+    batch.readyDay = started.estimatedReadyDay;
+    batch.industrialPlanId = started.planId;
+    batch.currentStageId = started.currentStageId;
+    trade.batches.push(batch);
+    record('production', producer.id, null, null, `Запущена партия ${product.name}`, `${plannedUnits} единиц проходят цепочку до дня ${started.estimatedReadyDay}.`, batchCost);
   }
 
   // 5. Упаковку выпускает отдельный промышленный сектор.
@@ -699,18 +736,19 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
 
 export function normalizeTradeState(value: TradeState | null | undefined): TradeState {
   if (!value) return {
-    inventory: [], products: [], batches: [], contracts: [], shipments: [], shelves: [], operations: [],
+    inventory: [], products: [], batches: [], contracts: [], shipments: [], shelves: [], operations: [], industrial: createIndustrialProductionState(),
     nextInventoryNumber: 1, nextProductNumber: 1, nextBatchNumber: 1, nextContractNumber: 1,
     nextShipmentNumber: 1, nextShelfNumber: 1, nextOperationNumber: 1,
   };
-  return {
+  const normalized: TradeState = {
     inventory: (value.inventory ?? []).map((lot) => ({ ...lot, status: lot.status ?? 'available', sourceLotIds: lot.sourceLotIds ?? [], productionBatchId: lot.productionBatchId ?? null, lotCode: lot.lotCode ?? `LOT-${lot.id}` })),
-    products: (value.products ?? []).map((product) => { const categoryId = product.beverageCategoryId ?? legacyCategoryForFamily(product.family); const profile = packagingProfileForCategory(categoryId); return ({ ...product, beverageCategoryId: categoryId, alcoholByVolume: Number.isFinite(product.alcoholByVolume) ? product.alcoholByVolume : defaultAbvForCategory(categoryId), packageVolumeLiters: Number.isFinite(product.packageVolumeLiters) ? product.packageVolumeLiters : (packagingComponent(profile.containerComponentId).volumeLiters ?? defaultPackageVolumeForCategory(categoryId)), packagingProfileId: product.packagingProfileId ?? profile.id }); }),
-    batches: (value.batches ?? []).map((batch) => ({ ...batch, ingredientLotIds: batch.ingredientLotIds ?? [], packagingLotIds: batch.packagingLotIds ?? [] })),
+    products: (value.products ?? []).map((product) => { const categoryId = product.beverageCategoryId ?? legacyCategoryForFamily(product.family); const profile = packagingProfileForCategory(categoryId); return ({ ...product, beverageCategoryId: categoryId, alcoholByVolume: Number.isFinite(product.alcoholByVolume) ? product.alcoholByVolume : defaultAbvForCategory(categoryId), packageVolumeLiters: Number.isFinite(product.packageVolumeLiters) ? product.packageVolumeLiters : (packagingComponent(profile.containerComponentId).volumeLiters ?? defaultPackageVolumeForCategory(categoryId)), packagingProfileId: product.packagingProfileId ?? profile.id, productionBlueprintId: product.productionBlueprintId ?? `industrial-${categoryId.replaceAll('_', '-')}`, vintageYear: product.vintageYear ?? null, ageStatementMonths: product.ageStatementMonths ?? null }); }),
+    batches: (value.batches ?? []).map((batch) => ({ ...batch, ingredientLotIds: batch.ingredientLotIds ?? [], packagingLotIds: batch.packagingLotIds ?? [], industrialPlanId: batch.industrialPlanId ?? null, currentStageId: batch.currentStageId ?? null })),
     contracts: (value.contracts ?? []).map((contract) => ({ ...contract, sellerAssetId: contract.sellerAssetId ?? null })),
     shipments: (value.shipments ?? []).map((shipment) => ({ ...shipment, sellerAssetId: shipment.sellerAssetId ?? null, lotAllocations: shipment.lotAllocations ?? [] })),
     shelves: (value.shelves ?? []).map((shelf) => ({ ...shelf, lotAllocations: shelf.lotAllocations ?? [{ lotId: `legacy-shelf-lot:${shelf.id}`, quantity: shelf.units }], soldLotAllocationsToday: shelf.soldLotAllocationsToday ?? [] })),
     operations: value.operations ?? [],
+    industrial: normalizeIndustrialProductionState(value.industrial),
     nextInventoryNumber: value.nextInventoryNumber ?? 1,
     nextProductNumber: value.nextProductNumber ?? 1,
     nextBatchNumber: value.nextBatchNumber ?? 1,
@@ -719,6 +757,16 @@ export function normalizeTradeState(value: TradeState | null | undefined): Trade
     nextShelfNumber: value.nextShelfNumber ?? 1,
     nextOperationNumber: value.nextOperationNumber ?? 1,
   };
+  for (const batch of normalized.batches.filter((item) => item.status === 'producing' && !item.industrialPlanId)) {
+    const product = normalized.products.find((item) => item.id === batch.productId);
+    if (!product) continue;
+    const started = startIndustrialBatch(normalized.industrial, batch, product, batch.startDay);
+    normalized.industrial = started.industrial;
+    batch.industrialPlanId = started.planId;
+    batch.currentStageId = started.currentStageId;
+    batch.readyDay = Math.max(batch.readyDay, started.estimatedReadyDay);
+  }
+  return normalized;
 }
 
 export function productFamilyLabel(family: TradeProductFamily): string {
@@ -752,7 +800,7 @@ function createSeedProduct(producer: OrganizationState, family: TradeProductFami
   const baseQuality = clamp(Math.round(producer.reputation * .72 + 22 + hash(producer.id) % 9), 48, 94);
   const unitCost = roundMoney(family === 'spirit' ? 4.8 : family === 'wine' ? 3.1 : family === 'liqueur' ? 3.6 : 1.15 + baseQuality / 100);
   const wholesalePrice = roundMoney(unitCost * (1.52 + producer.reputation / 280));
-  const beverageCategoryId = legacyCategoryForFamily(family);
+  const beverageCategoryId = categoryForOrganization(producer, family);
   const packagingProfile = packagingProfileForCategory(beverageCategoryId);
   return {
     id: `trade-product-${number}`,
@@ -774,6 +822,9 @@ function createSeedProduct(producer: OrganizationState, family: TradeProductFami
     slowDays: 0,
     stockoutDays: 0,
     createdDay: day,
+    productionBlueprintId: `industrial-${beverageCategoryId.replaceAll('_', '-')}`,
+    vintageYear: ['still_wine', 'sparkling_wine', 'fortified_wine', 'brandy', 'cider'].includes(beverageCategoryId) ? 2026 + Math.floor((day - 1) / 365) : null,
+    ageStatementMonths: null,
   };
 }
 
@@ -810,22 +861,33 @@ function familyForOrganization(organization: Pick<OrganizationState, 'strategy' 
   return 'beer';
 }
 
-function ingredientRequirements(family: TradeProductFamily): { ingredientId: string; quantity: number }[] {
-  if (family === 'beer' || family === 'alcohol_free') return [
-    { ingredientId: 'malt-base', quantity: 42 },
-    { ingredientId: 'hops', quantity: 2.2 },
-    { ingredientId: 'beer-yeast', quantity: 2 },
-  ];
-  if (family === 'cider' || family === 'wine') return [
-    { ingredientId: 'apples', quantity: 260 },
-    { ingredientId: 'cider-yeast', quantity: 2 },
-    { ingredientId: 'sugar', quantity: 8 },
-  ];
-  return [
-    { ingredientId: 'malt-base', quantity: 55 },
-    { ingredientId: 'sugar', quantity: 18 },
-    { ingredientId: 'beer-yeast', quantity: 2 },
-  ];
+function ingredientRequirementsForCategory(categoryId: BeverageCategoryId, _family: TradeProductFamily): { ingredientId: string; quantity: number }[] {
+  return industrialBlueprintForCategory(categoryId).inputs.map((input) => ({
+    ingredientId: input.ingredientId,
+    quantity: input.quantityPer240Units,
+  }));
+}
+
+function categoryForOrganization(organization: Pick<OrganizationState, 'strategy' | 'name'>, family: TradeProductFamily): BeverageCategoryId {
+  const value = `${organization.strategy} ${organization.name}`.toLowerCase();
+  if (value.includes('пуаре') || value.includes('perry')) return 'perry';
+  if (value.includes('игрист') || value.includes('sparkling')) return 'sparkling_wine';
+  if (value.includes('крепл') || value.includes('port') || value.includes('sherry')) return 'fortified_wine';
+  if (value.includes('вермут') || value.includes('aperitif') || value.includes('аперитив')) return 'vermouth_aperitif';
+  if (value.includes('джин') || value.includes('gin')) return 'gin';
+  if (value.includes('ром') || value.includes('rum')) return 'rum';
+  if (value.includes('водк') || value.includes('vodka')) return 'vodka';
+  if (value.includes('бренди') || value.includes('cognac')) return 'brandy';
+  if (value.includes('агав') || value.includes('tequila') || value.includes('mezcal')) return 'agave_spirit';
+  if (value.includes('амаро') || value.includes('биттер')) return 'amaro_bitter';
+  if (value.includes('ликёр')) return 'liqueur';
+  if (value.includes('саке')) return 'sake';
+  if (value.includes('медов') || value.includes('mead')) return 'mead';
+  if (value.includes('rtd') || value.includes('hard seltzer')) return 'rtd';
+  if (value.includes('zero') || value.includes('безалког')) return 'alcohol_free';
+  if (family === 'wine') return 'still_wine';
+  if (family === 'spirit') return 'whisky';
+  return legacyCategoryForFamily(family);
 }
 
 function supplierForIngredient(ingredientId: string, suppliers: OrganizationState[]): OrganizationState | undefined {
@@ -920,12 +982,6 @@ function baseOperatingCost(organization: OrganizationState): number {
   return roundMoney(employeeCost + kindCost + organization.debt * .00038);
 }
 
-function productionDays(family: TradeProductFamily): number {
-  if (family === 'spirit') return 6;
-  if (family === 'wine') return 5;
-  if (family === 'liqueur') return 4;
-  return 3;
-}
 
 function ingredientName(id: string): string {
   return ingredients.find((item) => item.id === id)?.name ?? id;

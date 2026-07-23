@@ -386,3 +386,54 @@ industrial material
 - packaging lot входит в parents готового product lot;
 - возврат не превышает количество проданной возвратной тары;
 - экологический платёж и операция kernel идемпотентны.
+
+## Industrial Production 0.23.0
+
+`TradeState.industrial` является владельцем технологических процессов и промежуточного продукта до коммерческого розлива.
+
+### Границы
+
+- `TradeState.inventory` владеет доступным сырьём, упаковкой и готовым коммерческим товаром.
+- `IndustrialProductionState` владеет планами, process runs, промежуточными жидкостями, выдержкой и купажами.
+- `PackagingState` производит физические компоненты тары, но не управляет рецептом напитка.
+- `QualityState` анализирует конкретные лоты и не изменяет технологический процесс напрямую.
+- `Kernel` регистрирует identity и traceability, но не становится вторым владельцем объёма.
+
+### Универсальный поток
+
+```text
+ingredient lots
+→ IndustrialBatchPlan
+→ ProcessRun
+→ IntermediateLot
+→ optional MaturationLot
+→ optional BlendRecipe
+→ package stage
+→ TradeInventoryLot
+```
+
+### Расширение категорий
+
+Новая категория напитка требует:
+
+1. записи в `beverageCatalog`;
+2. `IndustrialBlueprint` с этапами;
+3. ingredient requirements;
+4. packaging profile;
+5. quality specification и country rules при необходимости.
+
+Она не требует нового доменного сервиса, отдельной вкладки или копии производственного автомата.
+
+### Коктейльная совместимость
+
+Готовый bottled product остаётся обычным `TradeProductState` и `TradeInventoryLot`. Барный движок сможет ссылаться на конкретный product id, категорию или ingredient tag. Собственная бутылка игрока и товар внешней компании поэтому будут взаимозаменяемо участвовать в cocktail recipe при соблюдении спецификации.
+
+### Инварианты
+
+- один batch имеет не более одного активного industrial plan;
+- process run потребляет только output предыдущего этапа либо исходные trade lots;
+- consumed intermediate lot не возвращается в доступный объём;
+- выдержка не увеличивает физический объём;
+- готовый inventory lot появляется только после завершения package stage;
+- фактическое количество бутылок не превышает доступный финальный объём;
+- новая категория должна проходить валидацию каталога.

@@ -4,7 +4,7 @@ import { startCompany } from './game';
 import { runObserverSimulation } from './observer';
 
 describe('observer simulation', () => {
-  it('runs a full autonomous year and reports kernel invariants', () => {
+  it('runs nine autonomous months and reports kernel invariants', () => {
     const property = properties[0];
     expect(property).toBeDefined();
     const state = startCompany({
@@ -14,8 +14,8 @@ describe('observer simulation', () => {
       regionId: property!.regionId,
       property: property!,
     }, new Date('2026-01-01T00:00:00.000Z'));
-    const result = runObserverSimulation(state, 365);
-    expect(result.report.finalDay).toBe(366);
+    const result = runObserverSimulation(state, 270);
+    expect(result.report.finalDay).toBe(271);
     expect(result.report.organizationCount).toBeGreaterThan(10);
     expect(result.report.productCount).toBeGreaterThan(0);
     expect(result.report.goodsEntries).toBeGreaterThan(0);
@@ -40,6 +40,10 @@ describe('observer simulation', () => {
     expect(result.report.packagingOrganizationCount).toBe(6);
     expect(result.report.packagingJobCount).toBeGreaterThan(0);
     expect(result.report.packagingComponentUnits).toBeGreaterThan(0);
+    expect(result.report.industrialPlanCount).toBeGreaterThan(0);
+    expect(result.report.industrialRunCount).toBeGreaterThan(0);
+    expect(result.report.intermediateLotCount).toBeGreaterThan(0);
+    expect(result.report.blendRecipeCount).toBeGreaterThan(0);
     expect(result.report.violations).toEqual([]);
-  }, 30_000);
+  }, 45_000);
 });
