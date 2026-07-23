@@ -1,9 +1,10 @@
 import { ingredients, supplierOffers, type IngredientUnit } from '../data/supplyCatalog';
 import type { BeverageCategoryId } from '../data/beverageCatalog';
+import { packagingComponent, packagingProfileForCategory, packagingRequirements } from '../data/packagingCatalog';
 import type { OrganizationState, WorldAssetState } from './ecosystem';
 import { calculateShelfDemand, recordConsumerPurchase, type DemandState } from './demand';
 
-export type TradeCommodityKind = 'ingredient' | 'product';
+export type TradeCommodityKind = 'ingredient' | 'packaging' | 'product';
 export type TradeProductFamily = 'beer' | 'cider' | 'wine' | 'spirit' | 'liqueur' | 'alcohol_free';
 export type TradeShipmentStatus = 'awaiting_transport' | 'in_transit' | 'customs_hold' | 'delivered' | 'delayed' | 'failed';
 export type TradeContractStatus = 'active' | 'paused' | 'broken';
@@ -23,7 +24,7 @@ export interface TradeInventoryLot {
   commodityKind: TradeCommodityKind;
   commodityId: string;
   quantity: number;
-  unit: IngredientUnit | 'bottle';
+  unit: IngredientUnit | 'bottle' | 'piece' | 'case' | 'pallet' | 'can' | 'keg';
   quality: number;
   unitCost: number;
   originOrganizationId: string;
@@ -48,6 +49,7 @@ export interface TradeProductState {
   recommendedRetailPrice: number;
   alcoholByVolume: number;
   packageVolumeLiters: number;
+  packagingProfileId?: string;
   status: TradeProductStatus;
   totalProduced: number;
   totalSold: number;
@@ -66,6 +68,7 @@ export interface TradeProductionBatchState {
   plannedUnits: number;
   producedUnits: number;
   ingredientLotIds: string[];
+  packagingLotIds?: string[];
   cost: number;
   issue: string | null;
 }
@@ -416,6 +419,11 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
         productionBatchId: null,
         lotCode: `IN-${shipment.id}`,
       });
+    } else if (shipment.commodityKind === 'packaging') {
+      const component = packagingComponent(shipment.commodityId);
+      trade.inventory.push({
+        id: `trade-lot-${trade.nextInventoryNumber++}`, organizationId: shipment.buyerOrganizationId, commodityKind: 'packaging', commodityId: shipment.commodityId, quantity: shipment.quantity, unit: component.unit, quality: 70 + hash(`${shipment.id}-${day}`) % 26, unitCost: shipment.unitPrice, originOrganizationId: shipment.sellerOrganizationId, receivedDay: day, expiresDay: null, status: 'available', sourceLotIds: shipment.lotAllocations?.map((allocation) => allocation.lotId) ?? [], productionBatchId: null, lotCode: `IN-${shipment.id}`,
+      });
     } else if (shipment.buyerAssetId) {
       const product = trade.products.find((item) => item.id === shipment.commodityId);
       const buyerAsset = assets.find((item) => item.id === shipment.buyerAssetId);
@@ -515,12 +523,12 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
     if (!product) return { ...batch, status: 'blocked', issue: 'Продукт больше не существует' };
     addInventory(trade, batch.producerOrganizationId, 'product', product.id, batch.plannedUnits, product.unitCost, batch.producerOrganizationId, day, {
       forceNew: true,
-      sourceLotIds: batch.ingredientLotIds,
+      sourceLotIds: [...batch.ingredientLotIds, ...(batch.packagingLotIds ?? [])],
       productionBatchId: batch.id,
       lotCode: `PK-${product.id}-${batch.id}`,
     });
     product.totalProduced += batch.plannedUnits;
-    record('production', batch.producerOrganizationId, null, null, `Готова партия ${product.name}`, `${batch.plannedUnits} бутылок поступили на склад производителя.`, batch.cost);
+    record('production', batch.producerOrganizationId, null, null, `Готова партия ${product.name}`, `${batch.plannedUnits} упакованных единиц поступили на склад производителя.`, batch.cost);
     return { ...batch, status: 'ready', producedUnits: batch.plannedUnits, issue: null };
   });
 
@@ -534,9 +542,12 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
     if (activeBatch || stock > Math.max(180, shelfDemand * 12)) continue;
     const plannedUnits = 180 + hash(`${producer.id}-${day}`) % 181;
     const requirements = ingredientRequirements(product.family).map((item) => ({ ...item, quantity: roundQuantity(item.quantity * plannedUnits / 240) }));
+    const packageNeeds = packagingRequirements(product.packagingProfileId ?? packagingProfileForCategory(product.beverageCategoryId ?? legacyCategoryForFamily(product.family)).id, plannedUnits);
     const missing = requirements.filter((requirement) => inventoryQuantity(trade, producer.id, 'ingredient', requirement.ingredientId) < requirement.quantity);
-    if (missing.length > 0) {
-      const issue = `Не хватает: ${missing.map((item) => ingredientName(item.ingredientId)).join(', ')}`;
+    const missingPackaging = packageNeeds.filter((requirement) => inventoryQuantity(trade, producer.id, 'packaging', requirement.componentId) < requirement.quantity);
+    if (missing.length > 0 || missingPackaging.length > 0) {
+      const missingLabels = [...missing.map((item) => ingredientName(item.ingredientId)), ...missingPackaging.map((item) => packagingComponent(item.componentId).name)];
+      const issue = `Не хватает: ${missingLabels.join(', ')}`;
       const existingBlocked = trade.batches.find((batch) => batch.producerOrganizationId === producer.id && batch.productId === product.id && batch.status === 'blocked');
       if (existingBlocked) {
         existingBlocked.startDay = day;
@@ -554,11 +565,12 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
           plannedUnits,
           producedUnits: 0,
           ingredientLotIds: [],
+          packagingLotIds: [],
           cost: 0,
           issue,
         });
-        record('shortage', producer.id, null, null, `${producer.name} остановила запуск`, `Не хватает сырья для ${product.name}: ${missing.map((item) => ingredientName(item.ingredientId)).join(', ')}.`);
-        events.push({ tone: 'warning', title: `${producer.name}: дефицит сырья`, detail: `Партия ${product.name} не запущена.` });
+        record('shortage', producer.id, null, null, `${producer.name} остановила запуск`, `Не хватает ресурсов для ${product.name}: ${missingLabels.join(', ')}.`);
+        events.push({ tone: 'warning', title: `${producer.name}: дефицит ресурсов`, detail: `Партия ${product.name} не запущена.` });
       }
       continue;
     }
@@ -567,6 +579,12 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
     for (const requirement of requirements) {
       const consumed = consumeInventory(trade, producer.id, 'ingredient', requirement.ingredientId, requirement.quantity);
       consumedLotIds.push(...consumed.lotIds);
+      batchCost += consumed.cost;
+    }
+    const packagingLotIds: string[] = [];
+    for (const requirement of packageNeeds) {
+      const consumed = consumeInventory(trade, producer.id, 'packaging', requirement.componentId, requirement.quantity);
+      packagingLotIds.push(...consumed.lotIds);
       batchCost += consumed.cost;
     }
     addMoneyDelta(costs, producer.id, batchCost * .18);
@@ -581,21 +599,14 @@ export function advanceTradeDay(state: TradeState, organizations: OrganizationSt
       plannedUnits,
       producedUnits: 0,
       ingredientLotIds: consumedLotIds,
+      packagingLotIds,
       cost: roundMoney(batchCost),
       issue: null,
     });
-    record('production', producer.id, null, null, `Запущена партия ${product.name}`, `${plannedUnits} бутылок будут готовы на ${day + productionDays(product.family)}-й день.`, batchCost);
+    record('production', producer.id, null, null, `Запущена партия ${product.name}`, `${plannedUnits} упакованных единиц будут готовы на ${day + productionDays(product.family)}-й день.`, batchCost);
   }
 
-  // 5. Промышленная упаковка пока пополняется отдельным сектором.
-  // Солод, хмель, яблоки, сахар и дрожжи больше не создаются здесь:
-  // их производит первичный сектор и перерабатывающие предприятия.
-  for (const supplier of nextOrganizations.filter((organization) => organization.kind === 'supplier' && organization.status !== 'acquired')) {
-    for (const lot of trade.inventory.filter((item) => item.organizationId === supplier.id && item.commodityKind === 'ingredient' && item.commodityId === 'bottles')) {
-      const target = 480 + hash(`${supplier.id}-${lot.commodityId}`) % 420;
-      if (lot.quantity < target * .35) lot.quantity = roundQuantity(lot.quantity + target * .6);
-    }
-  }
+  // 5. Упаковку выпускает отдельный промышленный сектор.
 
   // 6. Формирование отправок по контрактам.
   trade.contracts = trade.contracts.map((contract) => {
@@ -694,8 +705,8 @@ export function normalizeTradeState(value: TradeState | null | undefined): Trade
   };
   return {
     inventory: (value.inventory ?? []).map((lot) => ({ ...lot, status: lot.status ?? 'available', sourceLotIds: lot.sourceLotIds ?? [], productionBatchId: lot.productionBatchId ?? null, lotCode: lot.lotCode ?? `LOT-${lot.id}` })),
-    products: (value.products ?? []).map((product) => { const categoryId = product.beverageCategoryId ?? legacyCategoryForFamily(product.family); return ({ ...product, beverageCategoryId: categoryId, alcoholByVolume: Number.isFinite(product.alcoholByVolume) ? product.alcoholByVolume : defaultAbvForCategory(categoryId), packageVolumeLiters: Number.isFinite(product.packageVolumeLiters) ? product.packageVolumeLiters : defaultPackageVolumeForCategory(categoryId) }); }),
-    batches: value.batches ?? [],
+    products: (value.products ?? []).map((product) => { const categoryId = product.beverageCategoryId ?? legacyCategoryForFamily(product.family); const profile = packagingProfileForCategory(categoryId); return ({ ...product, beverageCategoryId: categoryId, alcoholByVolume: Number.isFinite(product.alcoholByVolume) ? product.alcoholByVolume : defaultAbvForCategory(categoryId), packageVolumeLiters: Number.isFinite(product.packageVolumeLiters) ? product.packageVolumeLiters : (packagingComponent(profile.containerComponentId).volumeLiters ?? defaultPackageVolumeForCategory(categoryId)), packagingProfileId: product.packagingProfileId ?? profile.id }); }),
+    batches: (value.batches ?? []).map((batch) => ({ ...batch, ingredientLotIds: batch.ingredientLotIds ?? [], packagingLotIds: batch.packagingLotIds ?? [] })),
     contracts: (value.contracts ?? []).map((contract) => ({ ...contract, sellerAssetId: contract.sellerAssetId ?? null })),
     shipments: (value.shipments ?? []).map((shipment) => ({ ...shipment, sellerAssetId: shipment.sellerAssetId ?? null, lotAllocations: shipment.lotAllocations ?? [] })),
     shelves: (value.shelves ?? []).map((shelf) => ({ ...shelf, lotAllocations: shelf.lotAllocations ?? [{ lotId: `legacy-shelf-lot:${shelf.id}`, quantity: shelf.units }], soldLotAllocationsToday: shelf.soldLotAllocationsToday ?? [] })),
@@ -716,6 +727,7 @@ export function productFamilyLabel(family: TradeProductFamily): string {
 
 export function commodityName(state: Pick<TradeState, 'products'>, kind: TradeCommodityKind, commodityId: string): string {
   if (kind === 'ingredient') return ingredientName(commodityId);
+  if (kind === 'packaging') return packagingComponent(commodityId).name;
   return state.products.find((product) => product.id === commodityId)?.name ?? 'Неизвестный продукт';
 }
 
@@ -740,19 +752,22 @@ function createSeedProduct(producer: OrganizationState, family: TradeProductFami
   const baseQuality = clamp(Math.round(producer.reputation * .72 + 22 + hash(producer.id) % 9), 48, 94);
   const unitCost = roundMoney(family === 'spirit' ? 4.8 : family === 'wine' ? 3.1 : family === 'liqueur' ? 3.6 : 1.15 + baseQuality / 100);
   const wholesalePrice = roundMoney(unitCost * (1.52 + producer.reputation / 280));
+  const beverageCategoryId = legacyCategoryForFamily(family);
+  const packagingProfile = packagingProfileForCategory(beverageCategoryId);
   return {
     id: `trade-product-${number}`,
     producerOrganizationId: producer.id,
     name: producer.strategy.includes('безалког') ? 'Hop Zero' : (namePool[number % namePool.length] ?? 'House Release'),
     family,
-    beverageCategoryId: legacyCategoryForFamily(family),
+    beverageCategoryId,
     style: producer.strategy,
     quality: baseQuality,
     unitCost,
     wholesalePrice,
     recommendedRetailPrice: roundMoney(wholesalePrice * 1.72),
-    alcoholByVolume: defaultAbvForCategory(legacyCategoryForFamily(family)),
-    packageVolumeLiters: defaultPackageVolumeForCategory(legacyCategoryForFamily(family)),
+    alcoholByVolume: defaultAbvForCategory(beverageCategoryId),
+    packageVolumeLiters: packagingComponent(packagingProfile.containerComponentId).volumeLiters ?? defaultPackageVolumeForCategory(beverageCategoryId),
+    packagingProfileId: packagingProfile.id,
     status: 'active',
     totalProduced: 0,
     totalSold: 0,
@@ -800,19 +815,16 @@ function ingredientRequirements(family: TradeProductFamily): { ingredientId: str
     { ingredientId: 'malt-base', quantity: 42 },
     { ingredientId: 'hops', quantity: 2.2 },
     { ingredientId: 'beer-yeast', quantity: 2 },
-    { ingredientId: 'bottles', quantity: 240 },
   ];
   if (family === 'cider' || family === 'wine') return [
     { ingredientId: 'apples', quantity: 260 },
     { ingredientId: 'cider-yeast', quantity: 2 },
     { ingredientId: 'sugar', quantity: 8 },
-    { ingredientId: 'bottles', quantity: 240 },
   ];
   return [
     { ingredientId: 'malt-base', quantity: 55 },
     { ingredientId: 'sugar', quantity: 18 },
     { ingredientId: 'beer-yeast', quantity: 2 },
-    { ingredientId: 'bottles', quantity: 180 },
   ];
 }
 
@@ -840,6 +852,7 @@ function addInventory(state: TradeState, organizationId: string, kind: TradeComm
     return existing.id;
   }
   const ingredient = kind === 'ingredient' ? ingredients.find((item) => item.id === commodityId) : null;
+  const packageComponent = kind === 'packaging' ? packagingComponent(commodityId) : null;
   const id = `trade-lot-${state.nextInventoryNumber++}`;
   state.inventory.push({
     id,
@@ -847,12 +860,12 @@ function addInventory(state: TradeState, organizationId: string, kind: TradeComm
     commodityKind: kind,
     commodityId,
     quantity: roundQuantity(quantity),
-    unit: ingredient?.unit ?? 'bottle',
+    unit: ingredient?.unit ?? packageComponent?.unit ?? 'bottle',
     quality: 78,
     unitCost: roundMoney(unitCost),
     originOrganizationId,
     receivedDay: day,
-    expiresDay: kind === 'ingredient' && ingredient ? day + ingredient.shelfLifeDays : day + 280,
+    expiresDay: kind === 'ingredient' && ingredient ? day + ingredient.shelfLifeDays : kind === 'packaging' ? null : day + 280,
     status: 'available',
     sourceLotIds: options.sourceLotIds ?? [],
     productionBatchId: options.productionBatchId ?? null,

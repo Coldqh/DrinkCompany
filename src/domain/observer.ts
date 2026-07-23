@@ -42,6 +42,10 @@ export interface ObserverSimulationReport {
   defaultedInvoiceCount: number;
   financialStatementCount: number;
   creditDrawn: number;
+  packagingOrganizationCount: number;
+  packagingJobCount: number;
+  packagingReturnCount: number;
+  packagingComponentUnits: number;
   finalPlayerCash: number;
   violations: string[];
 }
@@ -121,6 +125,10 @@ export function runObserverSimulation(initial: GameState, days: number, options:
         defaultedInvoiceCount: 0,
         financialStatementCount: 0,
         creditDrawn: 0,
+        packagingOrganizationCount: 0,
+        packagingJobCount: 0,
+        packagingReturnCount: 0,
+        packagingComponentUnits: 0,
         finalPlayerCash: state.finance.cash,
         violations: state.phase === 'operating' ? ['Operating state has no ecosystem'] : [],
       },
@@ -151,6 +159,9 @@ export function runObserverSimulation(initial: GameState, days: number, options:
   if (ecosystem.logistics.jobs.some((job) => job.status === 'delivered' && job.deliveredDay === null)) violations.push('Доставленный рейс без даты завершения');
   violations.push(...auditQuality(ecosystem.quality, ecosystem.trade));
   violations.push(...auditFinancialSystem(ecosystem.financials, ecosystem.organizations));
+  if (ecosystem.packaging.materialStocks.some((stock) => stock.quantity < 0)) violations.push('Отрицательный запас промышленного материала упаковки');
+  if (ecosystem.packaging.jobs.some((job) => job.quantity <= 0 || job.materialUsed < 0)) violations.push('Некорректное производственное задание упаковки');
+  if (ecosystem.packaging.returns.some((item) => item.collectedUnits < 0 || item.damagedUnits < 0)) violations.push('Некорректный цикл возврата тары');
   const licenseIds = new Set(ecosystem.regulation.licenses.map((license) => license.id));
   if (licenseIds.size !== ecosystem.regulation.licenses.length) violations.push('Дублирующиеся регуляторные лицензии');
   return {
@@ -194,6 +205,10 @@ export function runObserverSimulation(initial: GameState, days: number, options:
       defaultedInvoiceCount: ecosystem.financials.invoices.filter((invoice) => invoice.status === 'defaulted').length,
       financialStatementCount: ecosystem.financials.statements.length,
       creditDrawn: ecosystem.financials.creditFacilities.reduce((sum, facility) => sum + facility.drawn, 0),
+      packagingOrganizationCount: ecosystem.organizations.filter((organization) => organization.kind === 'packaging').length,
+      packagingJobCount: ecosystem.packaging.jobs.length,
+      packagingReturnCount: ecosystem.packaging.returns.length,
+      packagingComponentUnits: ecosystem.trade.inventory.filter((lot) => lot.commodityKind === 'packaging').reduce((sum, lot) => sum + lot.quantity, 0),
       finalPlayerCash: state.finance.cash,
       violations,
     },
