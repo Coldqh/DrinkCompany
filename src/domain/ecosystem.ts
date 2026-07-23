@@ -1,5 +1,5 @@
 import type { BrandState } from './brand';
-import type { BatchState } from './production';
+import { averageQuality, type BatchState } from './production';
 import {
   advanceRetailDay,
   cleanRetailVenue,
@@ -20,7 +20,16 @@ import {
 import type { MarketOutletState } from './market';
 import { isHospitalityAssetType } from '../data/hospitalityCatalog';
 import { suppliers } from '../data/supplyCatalog';
-import { advanceTradeDay, createTradeState, normalizeTradeState, type TradeState } from './trade';
+import {
+  advanceTradeDay,
+  createTradeState,
+  normalizeTradeState,
+  type TradeInventoryLot,
+  type TradeOperationState,
+  type TradeProductState,
+  type TradeShelfListingState,
+  type TradeState,
+} from './trade';
 import { advanceDemandDay, createDemandState, normalizeDemandState, type DemandState } from './demand';
 import { advanceRegulationDay, createRegulationState, normalizeRegulationState, type RegulationState } from './regulation';
 import { advancePrimaryProductionDay, createPrimarySector, ensurePrimarySector, type PrimaryProductionState } from './primaryProduction';
@@ -606,12 +615,16 @@ export function acquireAsset(state: EcosystemState, assetId: string, cash: numbe
     if (org.id === asset.ownerOrganizationId) return { ...org, assetIds: org.assetIds.filter((id) => id !== asset.id), cash: roundMoney(org.cash + cost), status: org.assetIds.length <= 1 ? 'strained' : org.status };
     return org;
   });
+  const assets = state.assets.map((item) => item.id === asset.id ? { ...item, ownerOrganizationId: state.playerOrganizationId, operatorOrganizationId: state.playerOrganizationId, status: 'operating' as const } : item);
+  const hospitality = refreshHospitalitySector(state, organizations, assets, state.trade, day);
   return {
     cost,
     ecosystem: {
       ...state,
-      organizations,
-      assets: state.assets.map((item) => item.id === asset.id ? { ...item, ownerOrganizationId: state.playerOrganizationId, operatorOrganizationId: state.playerOrganizationId, status: 'operating' } : item),
+      organizations: hospitality.organizations,
+      assets: hospitality.assets,
+      trade: hospitality.trade,
+      hospitality: hospitality.hospitality,
       transactions: [transaction, ...state.transactions].slice(0, 160),
       nextTransactionNumber: state.nextTransactionNumber + 1,
     },
@@ -629,12 +642,17 @@ export function leaseVacantAsset(state: EcosystemState, assetId: string, input: 
   if (cash < cost) throw new Error('Недостаточно денег на депозит и запуск точки');
   const venue = createSeedVenue(asset.id, input.type, name, asset.regionId, day, state.nextAssetNumber);
   const transaction = createTransaction(state, day, 'lease', state.playerOrganizationId, asset.ownerOrganizationId, asset.id, null, cost, `Арендован объект «${asset.name}»`, `${name} открывается в существующем помещении. Депозит и переоборудование оплачены.`);
+  const organizations = state.organizations.map((org) => org.id === state.playerOrganizationId ? { ...org, assetIds: unique([...org.assetIds, asset.id]), valuation: org.valuation + Math.round(fitout * .6) } : org);
+  const assets = state.assets.map((item) => item.id === asset.id ? { ...item, type: input.type, name, operatorOrganizationId: state.playerOrganizationId, status: 'operating' as const, venue, dailyOperatingCost: venue.dailyCost } : item);
+  const hospitality = refreshHospitalitySector(state, organizations, assets, state.trade, day);
   return {
     cost,
     ecosystem: {
       ...state,
-      organizations: state.organizations.map((org) => org.id === state.playerOrganizationId ? { ...org, assetIds: unique([...org.assetIds, asset.id]), valuation: org.valuation + Math.round(fitout * .6) } : org),
-      assets: state.assets.map((item) => item.id === asset.id ? { ...item, type: input.type, name, operatorOrganizationId: state.playerOrganizationId, status: 'operating', venue, dailyOperatingCost: venue.dailyCost } : item),
+      organizations: hospitality.organizations,
+      assets: hospitality.assets,
+      trade: hospitality.trade,
+      hospitality: hospitality.hospitality,
       transactions: [transaction, ...state.transactions].slice(0, 160),
       nextTransactionNumber: state.nextTransactionNumber + 1,
       nextAssetNumber: state.nextAssetNumber + 1,
@@ -741,14 +759,19 @@ export function transferGroupAsset(state: EcosystemState, assetId: string, targe
   if (sourceOrganizationId === targetOrganizationId) throw new Error('Объект уже принадлежит выбранной компании');
   const target = getOrganization(state, targetOrganizationId);
   const transaction = createTransaction(state, day, 'asset_transfer', targetOrganizationId, sourceOrganizationId, assetId, targetOrganizationId, 0, `${asset.name} передан внутри группы`, `${target.name} получила право собственности и операционный контроль без внешней продажи.`);
-  return {
-    ...state,
-    organizations: state.organizations.map((organization) => {
+  const organizations = state.organizations.map((organization) => {
       if (organization.id === sourceOrganizationId) return { ...organization, assetIds: organization.assetIds.filter((id) => id !== assetId), valuation: Math.max(0, organization.valuation - Math.round(asset.askingPrice * .8)) };
       if (organization.id === targetOrganizationId) return { ...organization, assetIds: unique([...organization.assetIds, assetId]), valuation: organization.valuation + Math.round(asset.askingPrice * .8) };
       return organization;
-    }),
-    assets: state.assets.map((item) => item.id === assetId ? { ...item, ownerOrganizationId: targetOrganizationId, operatorOrganizationId: targetOrganizationId } : item),
+    });
+  const assets = state.assets.map((item) => item.id === assetId ? { ...item, ownerOrganizationId: targetOrganizationId, operatorOrganizationId: targetOrganizationId } : item);
+  const hospitality = refreshHospitalitySector(state, organizations, assets, state.trade, day);
+  return {
+    ...state,
+    organizations: hospitality.organizations,
+    assets: hospitality.assets,
+    trade: hospitality.trade,
+    hospitality: hospitality.hospitality,
     transactions: [transaction, ...state.transactions].slice(0, 160),
     nextTransactionNumber: state.nextTransactionNumber + 1,
   };
@@ -757,6 +780,8 @@ export function transferGroupAsset(state: EcosystemState, assetId: string, targe
 export function stockControlledVenue(state: EcosystemState, assetId: string, release: BrandState['releases'][number], batch: BatchState, units: number, price: number, day: number): { ecosystem: EcosystemState; batch: BatchState } {
   const asset = getAsset(state, assetId);
   if (!isPlayerControlledAsset(state, asset) || !asset.venue) throw new Error('Точка не находится под твоим операционным контролем');
+  if (isHospitalityAssetType(asset.type)) return stockHospitalityVenue(state, asset, release, batch, units, price, day);
+  if (asset.type !== 'shop') throw new Error('Этот объект не поддерживает розничную выкладку');
   const retail: RetailState = stateToRetail(state);
   const result = stockRetailVenue(retail, asset.id, release, batch, units, price, day);
   return { ecosystem: mergeRetailState(state, result.retail), batch: result.batch };
@@ -979,6 +1004,183 @@ function supplierAssetType(supplierId: string): AssetType {
   if (supplierId === 'ferment-lab') return 'culture_lab';
   if (supplierId === 'pack-glass') return 'glass_plant';
   return 'warehouse';
+}
+
+function refreshHospitalitySector(
+  state: EcosystemState,
+  organizations: OrganizationState[],
+  assets: WorldAssetState[],
+  trade: TradeState,
+  day: number,
+): ReturnType<typeof ensureHospitalitySector> {
+  const operatorByAssetId = new Map(assets
+    .filter((asset) => isHospitalityAssetType(asset.type) && asset.operatorOrganizationId)
+    .map((asset) => [asset.id, asset.operatorOrganizationId!]));
+  const inventoryOwnerByLotId = new Map<string, string>();
+  for (const shelf of trade.shelves) {
+    const operatorOrganizationId = operatorByAssetId.get(shelf.assetId);
+    if (!operatorOrganizationId) continue;
+    for (const allocation of shelf.lotAllocations ?? []) inventoryOwnerByLotId.set(allocation.lotId, operatorOrganizationId);
+  }
+  const reboundTrade: TradeState = {
+    ...trade,
+    inventory: trade.inventory.map((lot) => inventoryOwnerByLotId.has(lot.id) ? { ...lot, organizationId: inventoryOwnerByLotId.get(lot.id)! } : lot),
+    contracts: trade.contracts.map((contract) => contract.buyerAssetId && operatorByAssetId.has(contract.buyerAssetId)
+      ? { ...contract, buyerOrganizationId: operatorByAssetId.get(contract.buyerAssetId)! }
+      : contract),
+    shipments: trade.shipments.map((shipment) => shipment.buyerAssetId && operatorByAssetId.has(shipment.buyerAssetId)
+      ? { ...shipment, buyerOrganizationId: operatorByAssetId.get(shipment.buyerAssetId)! }
+      : shipment),
+  };
+  return ensureHospitalitySector({ state: state.hospitality, organizations, assets, trade: reboundTrade, day });
+}
+
+function stockHospitalityVenue(
+  state: EcosystemState,
+  asset: WorldAssetState,
+  release: BrandState['releases'][number],
+  batch: BatchState,
+  units: number,
+  price: number,
+  day: number,
+): { ecosystem: EcosystemState; batch: BatchState } {
+  if (asset.status !== 'operating' || asset.venue?.status !== 'open') throw new Error('Заведение закрыто');
+  if (release.batchId !== batch.id || release.status !== 'active') throw new Error('Активный релиз не связан с выбранной партией');
+  if (!Number.isInteger(units) || units < 6) throw new Error('Минимальная поставка — 6 бутылок');
+  if (units > batch.availableUnits) throw new Error('На складе готовой продукции недостаточно бутылок');
+  if (!Number.isFinite(price) || price <= release.wholesalePrice) throw new Error('Цена подачи должна быть выше оптовой');
+
+  const currentUnits = state.trade.shelves
+    .filter((shelf) => shelf.assetId === asset.id)
+    .reduce((sum, shelf) => sum + shelf.units, 0);
+  const hospitalityStockLimit = Math.max(retailStockLimit(asset.venue), asset.capacity * 8);
+  if (currentUnits + units > hospitalityStockLimit) throw new Error('В заведении не хватает места под выбранный объём');
+
+  const productId = `player-release:${release.id}`;
+  const productUnitCost = batch.packagedUnits > 0
+    ? roundMoney((batch.productionCost + batch.packagingCost) / batch.packagedUnits)
+    : roundMoney(release.wholesalePrice * .55);
+  const packageVolumeLiters = release.packaging.volumeMl / 1_000;
+  const quality = averageQuality(batch.quality);
+  const existingProduct = state.trade.products.find((product) => product.id === productId);
+  const product: TradeProductState = existingProduct
+    ? {
+      ...existingProduct,
+      name: release.name,
+      quality,
+      unitCost: productUnitCost,
+      wholesalePrice: release.wholesalePrice,
+      recommendedRetailPrice: roundMoney(price),
+      packageVolumeLiters,
+      status: 'active',
+      totalProduced: existingProduct.totalProduced + units,
+    }
+    : {
+      id: productId,
+      producerOrganizationId: state.playerOrganizationId,
+      name: release.name,
+      family: batch.recipe.family,
+      beverageCategoryId: batch.recipe.family,
+      style: batch.recipe.styleId,
+      quality,
+      unitCost: productUnitCost,
+      wholesalePrice: release.wholesalePrice,
+      recommendedRetailPrice: roundMoney(price),
+      alcoholByVolume: batch.recipe.family === 'beer' ? 5 : 5.5,
+      packageVolumeLiters,
+      status: 'active',
+      totalProduced: units,
+      totalSold: 0,
+      slowDays: 0,
+      stockoutDays: 0,
+      createdDay: day,
+      productionBlueprintId: `industrial-${batch.recipe.family}`,
+      vintageYear: batch.recipe.family === 'cider' ? 2026 + Math.floor((day - 1) / 365) : null,
+      ageStatementMonths: null,
+    };
+
+  const inventoryLotId = `trade-inventory-${state.trade.nextInventoryNumber}`;
+  const inventoryLot: TradeInventoryLot = {
+    id: inventoryLotId,
+    organizationId: asset.operatorOrganizationId ?? state.playerOrganizationId,
+    commodityKind: 'product',
+    commodityId: productId,
+    quantity: units,
+    unit: 'bottle',
+    quality,
+    unitCost: productUnitCost,
+    originOrganizationId: state.playerOrganizationId,
+    receivedDay: day,
+    expiresDay: day + (batch.recipe.family === 'beer' ? 180 : 270),
+    status: 'available',
+    sourceLotIds: unique([...batch.rawMaterials, ...batch.packagingMaterials].map((item) => item.lotId)),
+    productionBatchId: batch.id,
+    lotCode: `${batch.code}-${release.id}`,
+  };
+
+  const existingShelf = state.trade.shelves.find((shelf) => shelf.assetId === asset.id && shelf.productId === productId);
+  const shelf: TradeShelfListingState = existingShelf
+    ? {
+      ...existingShelf,
+      units: existingShelf.units + units,
+      retailPrice: roundMoney(price),
+      lastRestockDay: day,
+      stockoutDays: 0,
+      lotAllocations: [...(existingShelf.lotAllocations ?? []), { lotId: inventoryLotId, quantity: units }],
+    }
+    : {
+      id: `trade-shelf-${state.trade.nextShelfNumber}`,
+      assetId: asset.id,
+      productId,
+      supplierOrganizationId: state.playerOrganizationId,
+      units,
+      retailPrice: roundMoney(price),
+      unitsSoldToday: 0,
+      revenueToday: 0,
+      totalUnitsSold: 0,
+      lastRestockDay: day,
+      stockoutDays: 0,
+      lotAllocations: [{ lotId: inventoryLotId, quantity: units }],
+      soldLotAllocationsToday: [],
+    };
+
+  const operation: TradeOperationState = {
+    id: `trade-operation-${day}-${state.trade.nextOperationNumber}`,
+    day,
+    kind: existingProduct ? 'delivery' : 'release',
+    organizationId: state.playerOrganizationId,
+    counterpartyOrganizationId: null,
+    assetId: asset.id,
+    headline: `${release.name} передан в ${asset.name}`,
+    detail: `${units} бутылок поступили в реальный запас заведения и доступны для порционной продажи.`,
+    amount: 0,
+  };
+
+  const trade: TradeState = {
+    ...state.trade,
+    products: existingProduct
+      ? state.trade.products.map((item) => item.id === productId ? product : item)
+      : [...state.trade.products, product],
+    inventory: [...state.trade.inventory, inventoryLot],
+    shelves: existingShelf
+      ? state.trade.shelves.map((item) => item.id === existingShelf.id ? shelf : item)
+      : [...state.trade.shelves, shelf],
+    operations: [operation, ...state.trade.operations].slice(0, 240),
+    nextInventoryNumber: state.trade.nextInventoryNumber + 1,
+    nextShelfNumber: existingShelf ? state.trade.nextShelfNumber : state.trade.nextShelfNumber + 1,
+    nextOperationNumber: state.trade.nextOperationNumber + 1,
+  };
+  const hospitality = refreshHospitalitySector(state, state.organizations, state.assets, trade, day);
+  return {
+    ecosystem: {
+      ...state,
+      organizations: hospitality.organizations,
+      assets: hospitality.assets,
+      trade: hospitality.trade,
+      hospitality: hospitality.hospitality,
+    },
+    batch: { ...batch, availableUnits: batch.availableUnits - units },
+  };
 }
 
 function stateToRetail(state: EcosystemState): RetailState {

@@ -513,12 +513,22 @@ describe('world ecosystem', () => {
     state = leaseWorldAsset(state, 'vacant-bavaria-1', 'bar', 'Black Yard');
     const asset = state.ecosystem?.assets.find((item) => item.id === 'vacant-bavaria-1');
     if (!asset?.venue) throw new Error('venue missing');
+    const hospitalityVenue = state.ecosystem?.hospitality.venues.find((item) => item.assetId === asset.id);
+    expect(hospitalityVenue?.operatorOrganizationId).toBe(state.ecosystem?.playerOrganizationId);
     const availableBefore = state.production.batches.find((item) => item.id === batch.id)?.availableUnits ?? 0;
     state = stockWorldVenue(state, asset.id, release.id, 24, 5.4);
     expect(state.production.batches.find((item) => item.id === batch.id)?.availableUnits).toBe(availableBefore - 24);
+    const tradeProductId = `player-release:${release.id}`;
+    expect(state.ecosystem?.trade.products.find((item) => item.id === tradeProductId)?.producerOrganizationId).toBe(state.ecosystem?.playerOrganizationId);
+    expect(state.ecosystem?.trade.shelves.find((item) => item.assetId === asset.id && item.productId === tradeProductId)?.units).toBe(24);
+    expect(state.ecosystem?.hospitality.menuItems.some((item) => item.venueId === hospitalityVenue?.id && item.ingredients.some((ingredient) => ingredient.productId === tradeProductId))).toBe(true);
+    const playerLot = state.ecosystem?.trade.inventory.find((item) => item.productionBatchId === batch.id && item.commodityId === tradeProductId);
+    expect(playerLot).toBeDefined();
     const cashBefore = state.finance.cash;
     state = advanceDay(state);
-    expect(state.ecosystem?.retailReports[0]?.unitsSold).toBeGreaterThan(0);
+    const shift = state.ecosystem?.hospitality.shiftReports.find((item) => item.venueId === hospitalityVenue?.id);
+    expect(shift?.orders).toBeGreaterThan(0);
+    expect(shift?.items.some((item) => item.sourceLotIds.includes(playerLot?.id ?? 'missing'))).toBe(true);
     expect(state.finance.retailRevenue).toBeGreaterThan(0);
     expect(state.finance.cash).toBeGreaterThan(cashBefore - state.finance.dailyFixedCost);
   });
@@ -543,6 +553,16 @@ describe('world ecosystem', () => {
     state = investWorldOrganization(state, organization.id, 10);
     expect(state.ecosystem?.holdings.some((holding) => holding.organizationId === organization.id && holding.share === 10)).toBe(true);
     expect(state.finance.cash).toBeLessThan(cashBefore);
+  });
+
+  it('сразу передаёт hospitality-операцию игроку после покупки заведения', () => {
+    let state = createCompany();
+    state = { ...state, finance: { ...state.finance, cash: 500_000 } };
+    const asset = state.ecosystem?.assets.find((item) => item.type === 'cocktail_bar');
+    if (!asset || !state.ecosystem?.hospitality.venues.some((item) => item.assetId === asset.id)) throw new Error('hospitality asset missing');
+    state = acquireWorldAsset(state, asset.id);
+    expect(state.ecosystem?.hospitality.venues.find((item) => item.assetId === asset.id)?.operatorOrganizationId).toBe(state.ecosystem?.playerOrganizationId);
+    expect(state.ecosystem?.trade.contracts.filter((item) => item.buyerAssetId === asset.id).every((item) => item.buyerOrganizationId === state.ecosystem?.playerOrganizationId)).toBe(true);
   });
 
   it('учитывает санитарную смену и расширение контролируемой точки', () => {
