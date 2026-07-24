@@ -3,6 +3,7 @@ import type { ActionResult } from '../../app/useGameState';
 import {
   CAMPAIGN_CATALOG,
   DEFAULT_PACKAGING,
+  marketChannelLabel,
   positioningLabel,
   type BrandDraft,
   type BrandPositioning,
@@ -12,6 +13,7 @@ import {
   type ReleaseDraft,
 } from '../../domain/brand';
 import type { GameState } from '../../domain/game';
+import type { MarketChannel } from '../../domain/market';
 import { Icon } from '../../ui/Icon';
 import { EmptyState, Modal } from '../../ui/MobileUI';
 
@@ -70,8 +72,9 @@ function ReleaseModal({ state, onClose, onCreate }: { state: GameState; onClose:
   const [packaging, setPackaging] = useState<PackagingDesign>({ ...DEFAULT_PACKAGING });
   const [wholesalePrice, setWholesalePrice] = useState(2.8);
   const [retailPrice, setRetailPrice] = useState(5.2);
-  return <Modal title="Новый релиз" kicker="Партия → товар" onClose={onClose} footer={<button className="button primary" onClick={() => onCreate({ brandId, batchId, name, positioning, packaging, wholesalePrice, retailPrice })}>Запустить релиз</button>}>
-    <div className="modal-form"><label><span>Бренд</span><select value={brandId} onChange={(event) => setBrandId(event.target.value)}>{state.brand.brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label><label><span>Партия</span><select value={batchId} onChange={(event) => setBatchId(event.target.value)}>{packaged.map((batch) => <option key={batch.id} value={batch.id}>{batch.code} · {batch.recipe.name}</option>)}</select></label><label><span>Название продукта</span><input value={name} onChange={(event) => setName(event.target.value)} /></label><label><span>Позиционирование</span><select value={positioning} onChange={(event) => setPositioning(event.target.value as BrandPositioning)}>{(['mass','local','premium','experimental','bar'] as BrandPositioning[]).map((value) => <option key={value} value={value}>{positioningLabel(value)}</option>)}</select></label></div>
+  const [targetChannel, setTargetChannel] = useState<MarketChannel>('specialty');
+  return <Modal title="Новый релиз" kicker="Партия → товар" onClose={onClose} footer={<button className="button primary" onClick={() => onCreate({ brandId, batchId, name, positioning, packaging, wholesalePrice, retailPrice, targetChannel })}>Запустить релиз</button>}>
+    <div className="modal-form"><label><span>Бренд</span><select value={brandId} onChange={(event) => setBrandId(event.target.value)}>{state.brand.brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label><label><span>Партия</span><select value={batchId} onChange={(event) => setBatchId(event.target.value)}>{packaged.map((batch) => <option key={batch.id} value={batch.id}>{batch.code} · {batch.recipe.name}</option>)}</select></label><label><span>Название продукта</span><input value={name} onChange={(event) => setName(event.target.value)} /></label><label><span>Позиционирование</span><select value={positioning} onChange={(event) => setPositioning(event.target.value as BrandPositioning)}>{(['mass','local','premium','experimental','bar'] as BrandPositioning[]).map((value) => <option key={value} value={value}>{positioningLabel(value)}</option>)}</select></label><label><span>Первый канал продаж</span><select value={targetChannel} onChange={(event) => setTargetChannel(event.target.value as MarketChannel)}>{(['bar','store','specialty'] as MarketChannel[]).map((channel) => <option key={channel} value={channel}>{marketChannelLabel(channel)}</option>)}</select></label></div>
     <div className="package-editor"><SelectLine label="Форма" value={packaging.form} options={[['stubby','Короткая'],['longneck','Longneck'],['wine','Винная']]} onChange={(form) => setPackaging({ ...packaging, form: form as PackagingDesign['form'] })} /><SelectLine label="Стекло" value={packaging.glass} options={[['black','Чёрное'],['smoke','Дымчатое'],['clear','Прозрачное']]} onChange={(glass) => setPackaging({ ...packaging, glass: glass as PackagingDesign['glass'] })} /><SelectLine label="Этикетка" value={packaging.label} options={[['minimal','Минимализм'],['editorial','Редакционная'],['industrial','Индустриальная'],['heritage','Наследие']]} onChange={(label) => setPackaging({ ...packaging, label: label as PackagingDesign['label'] })} /><SelectLine label="Объём" value={`${packaging.volumeMl}`} options={[['330','330 мл'],['500','500 мл'],['750','750 мл']]} onChange={(volume) => setPackaging({ ...packaging, volumeMl: Number(volume) as PackagingDesign['volumeMl'] })} /></div>
     <div className="detail-grid"><label><span>Опт</span><input type="number" step="0.1" value={wholesalePrice} onChange={(event) => setWholesalePrice(Number(event.target.value))} /></label><label><span>Розница</span><input type="number" step="0.1" value={retailPrice} onChange={(event) => setRetailPrice(Number(event.target.value))} /></label></div>
   </Modal>;

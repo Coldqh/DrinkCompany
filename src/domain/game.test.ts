@@ -506,7 +506,7 @@ describe('world ecosystem', () => {
     state = registerBrand(state, { name: 'Night District', tagline: 'Local beer', positioning: 'bar', story: 'Test brand' });
     const brand = state.brand.brands[0];
     if (!brand) throw new Error('brand missing');
-    state = registerProductRelease(state, { brandId: brand.id, batchId: batch.id, name: 'District Pale', positioning: 'bar', packaging: DEFAULT_PACKAGING, wholesalePrice: 2.6, retailPrice: 5.2 });
+    state = registerProductRelease(state, { brandId: brand.id, batchId: batch.id, name: 'District Pale', positioning: 'bar', packaging: DEFAULT_PACKAGING, wholesalePrice: 2.6, retailPrice: 5.2, targetChannel: 'bar' });
     const release = state.brand.releases[0];
     if (!release) throw new Error('release missing');
     state = { ...state, finance: { ...state.finance, cash: state.finance.cash + 100_000 } };

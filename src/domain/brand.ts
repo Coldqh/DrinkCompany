@@ -39,6 +39,7 @@ export interface ProductRelease {
   packaging: PackagingDesign;
   wholesalePrice: number;
   retailPrice: number;
+  targetChannel?: MarketChannel;
   setupCost: number;
   unitPackagingCost: number;
   visualAppeal: number;
@@ -85,6 +86,7 @@ export interface ReleaseDraft {
   packaging: PackagingDesign;
   wholesalePrice: number;
   retailPrice: number;
+  targetChannel: MarketChannel;
 }
 
 export const DEFAULT_PACKAGING: PackagingDesign = {
@@ -150,6 +152,7 @@ export function createRelease(state: BrandState, draft: ReleaseDraft, batch: Bat
     packaging: draft.packaging,
     wholesalePrice: roundMoney(draft.wholesalePrice),
     retailPrice: roundMoney(draft.retailPrice),
+    targetChannel: draft.targetChannel,
     setupCost,
     unitPackagingCost,
     visualAppeal,
@@ -205,16 +208,29 @@ export function commercialScoreForBatch(state: BrandState, batchId: string, chan
   const release = state.releases.find((item) => item.batchId === batchId && item.status === 'active');
   if (!release) return -4;
   const brand = state.brands.find((item) => item.id === release.brandId);
+  const launchChannel = release.targetChannel ?? inferTargetChannel(release.positioning);
+  const targetFit = launchChannel === channel ? 6 : 0;
   const channelFit = release.positioning === 'bar' && channel === 'bar' ? 8
     : release.positioning === 'mass' && channel === 'store' ? 7
       : release.positioning === 'premium' && channel === 'specialty' ? 8
         : release.positioning === 'experimental' && channel === 'specialty' ? 6
           : release.positioning === 'local' ? 4 : 0;
-  return clamp(Math.round(release.visualAppeal * 0.08 + release.audienceClarity * 0.07 + release.awareness * 0.06 + (brand?.reputation ?? 0) * 0.05 + channelFit - 12), -8, 18);
+  return clamp(Math.round(release.visualAppeal * 0.08 + release.audienceClarity * 0.07 + release.awareness * 0.06 + (brand?.reputation ?? 0) * 0.05 + channelFit + targetFit - 12), -8, 18);
 }
 
 export function activeReleaseForBatch(state: BrandState, batchId: string): ProductRelease | undefined {
   return state.releases.find((item) => item.batchId === batchId && item.status === 'active');
+}
+
+
+export function inferTargetChannel(positioning: BrandPositioning): MarketChannel {
+  if (positioning === 'bar') return 'bar';
+  if (positioning === 'mass') return 'store';
+  return 'specialty';
+}
+
+export function marketChannelLabel(channel: MarketChannel): string {
+  return { bar: 'Бары и клубы', store: 'Розничные магазины', specialty: 'Специализированные точки' }[channel];
 }
 
 export function positioningLabel(value: BrandPositioning): string {
