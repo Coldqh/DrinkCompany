@@ -8,14 +8,15 @@ import { EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
 
 interface SupplyHubProps {
   state: GameState;
+  initialSection?: SupplySection;
   onOrder: (offerId: string, quantity: number) => ActionResult;
   onSignSupplier: (supplierId: string) => ActionResult;
 }
 
 type SupplySection = 'inventory' | 'suppliers' | 'orders';
 
-export function SupplyHub({ state, onOrder, onSignSupplier }: SupplyHubProps) {
-  const [section, setSection] = useState<SupplySection>('inventory');
+export function SupplyHub({ state, onOrder, onSignSupplier, initialSection = 'inventory' }: SupplyHubProps) {
+  const [section, setSection] = useState<SupplySection>(initialSection);
   const [search, setSearch] = useState('');
   const [selectedLot, setSelectedLot] = useState<InventoryLot | null>(null);
   const [selectedOffer, setSelectedOffer] = useState<SupplierOfferState | null>(null);

@@ -24,6 +24,7 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
   const [tab, setTab] = useState<Tab>('today');
   const [companyOpen, setCompanyOpen] = useState(false);
   const [dayMessage, setDayMessage] = useState<string | null>(null);
+  const [productionFlowOpen, setProductionFlowOpen] = useState(false);
   const activeOffers = game.state.world?.proposals.filter((proposal) => proposal.status === 'offer').length ?? 0;
   const activeOrders = game.state.world?.repeatOrders.filter((order) => order.status === 'pending').length ?? 0;
   const readyBatches = game.state.production.batches.filter((batch) => ['ready', 'tasted'].includes(batch.status)).length;
@@ -48,7 +49,7 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
   }
 
   return (
-    <div className="app-shell ux-shell">
+    <div className={`app-shell ux-shell ${productionFlowOpen ? 'flow-active' : ''}`}>
       <aside className="desktop-rail" aria-label="Основная навигация">
         <div className="rail-brand">
           <span className="rail-brand-mark"><Icon name="bottle" /></span>
@@ -95,7 +96,7 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
 
         <main className="content ux-content" key={tab}>
           {tab === 'today' && <TodayView state={game.state} onOpen={openTarget} />}
-          {tab === 'production' && <ProductionStudio state={game.state} onBuyEquipment={game.buyEquipment} onSaveRecipe={game.saveRecipeDraft} onLaunchBatch={game.launchBatch} onTaste={game.tasteBatch} onPackage={game.packageBatch} onDiscard={game.discardBatch} onOrderSupply={game.orderSupply} onSignSupplier={game.signSupplier} onExpandRoom={game.expandRoom} onExpandUtility={game.expandUtility} onCleanFacility={game.cleanFacility} onServiceEquipment={game.serviceEquipment} onUpgradeEquipment={game.upgradeEquipment} onQueueRecipe={game.queueRecipe} onRemoveQueue={game.removeQueue} onCreateBrand={game.createBrand} onCreateRelease={game.createRelease} onOpenTrade={() => setTab('trade')} />}
+          {tab === 'production' && <ProductionStudio state={game.state} onBuyEquipment={game.buyEquipment} onSaveRecipe={game.saveRecipeDraft} onLaunchBatch={game.launchBatch} onTaste={game.tasteBatch} onPackage={game.packageBatch} onDiscard={game.discardBatch} onOrderSupply={game.orderSupply} onSignSupplier={game.signSupplier} onExpandRoom={game.expandRoom} onExpandUtility={game.expandUtility} onCleanFacility={game.cleanFacility} onServiceEquipment={game.serviceEquipment} onUpgradeEquipment={game.upgradeEquipment} onQueueRecipe={game.queueRecipe} onRemoveQueue={game.removeQueue} onCreateBrand={game.createBrand} onCreateRelease={game.createRelease} onOpenTrade={() => setTab('trade')} onFlowChange={setProductionFlowOpen} />}
           {tab === 'trade' && <MarketWorld state={game.state} onSendProposal={game.sendProposal} onAcceptOffer={game.acceptOffer} onDeclineOffer={game.declineOffer} onFulfillOrder={game.fulfillOrder} onCreateBrand={game.createBrand} onCreateRelease={game.createRelease} onLaunchCampaign={game.launchCampaign} />}
           {tab === 'world' && <WorldHub state={game.state} onAcquire={game.acquireAsset} onLease={game.leaseAsset} onInvest={game.investOrganization} onTakeover={game.takeoverOrganization} onInject={game.injectSubsidiaryCapital} onPolicy={game.setSubsidiaryPolicy} onTransfer={game.transferGroupAsset} onStock={game.stockWorldVenue} onClean={game.cleanWorldVenue} onUpgrade={game.upgradeWorldVenue} onStatus={game.setWorldVenueStatus} />}
         </main>
@@ -103,11 +104,11 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
 
       {dayMessage && <div className="day-toast" role="status"><Icon name="check" />{dayMessage}</div>}
 
-      <nav className="main-dock" aria-label="Основная навигация">
+      {!productionFlowOpen && <nav className="main-dock" aria-label="Основная навигация">
         {tabs.slice(0, 2).map((item) => <NavButton key={item.id} item={item} active={tab === item.id} badge={badgeFor(item.id)} onClick={() => setTab(item.id)} />)}
         <button className="next-day-control" onClick={finishDay} aria-label="Перейти к следующему дню"><Icon name="clock" /><span>День</span></button>
         {tabs.slice(2).map((item) => <NavButton key={item.id} item={item} active={tab === item.id} badge={badgeFor(item.id)} onClick={() => setTab(item.id)} />)}
-      </nav>
+      </nav>}
 
       {companyOpen && <Modal title={game.state.company.name} kicker={`День ${game.state.day} · ${game.state.mode === 'roguelike' ? 'жёсткий режим' : 'стандарт'}`} onClose={() => setCompanyOpen(false)} wide><CompanyCenter game={game} version={version} /></Modal>}
     </div>
