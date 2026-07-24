@@ -29,9 +29,6 @@ interface TimelineItem {
 
 export function TodayView({ state, onOpen }: TodayViewProps) {
   const decisions = buildDecisions(state);
-  const activeBatches = state.production.batches.filter((batch) => !['packaged', 'discarded'].includes(batch.status));
-  const shipments = state.supply.purchaseOrders.filter((order) => ['pending', 'delayed'].includes(order.status));
-  const freight = state.ecosystem?.trade.shipments.filter((shipment) => ['awaiting_transport', 'in_transit', 'delayed', 'customs_hold'].includes(shipment.status)) ?? [];
   const cashDays = state.finance.dailyFixedCost > 0 ? Math.floor(state.finance.cash / state.finance.dailyFixedCost) : 999;
   const timeline = buildTimeline(state);
   const activeCount = timeline.length;

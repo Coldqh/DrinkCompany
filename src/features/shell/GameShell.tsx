@@ -13,12 +13,19 @@ export type Tab = 'today' | 'production' | 'trade' | 'world';
 
 type TabIcon = 'home' | 'factory' | 'market' | 'map';
 
-const tabs: { id: Tab; label: string; description: string; icon: TabIcon }[] = [
+interface TabDefinition {
+  id: Tab;
+  label: string;
+  description: string;
+  icon: TabIcon;
+}
+
+const tabs = [
   { id: 'today', label: 'Сегодня', description: 'Решения и движение дня', icon: 'home' },
   { id: 'production', label: 'Производство', description: 'Партии, сырьё и объект', icon: 'factory' },
   { id: 'trade', label: 'Торговля', description: 'Бренды, сделки и покупатели', icon: 'market' },
   { id: 'world', label: 'Мир', description: 'Бары, клубы и компании', icon: 'map' },
-];
+] as const satisfies readonly [TabDefinition, ...TabDefinition[]];
 
 export function GameShell({ game, version }: { game: GameController; version: VersionGuard }) {
   const [tab, setTab] = useState<Tab>('today');
@@ -122,7 +129,7 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
   );
 }
 
-function RailNavButton({ item, active, badge, onClick }: { item: { id: Tab; label: string; description: string; icon: TabIcon }; active: boolean; badge: number; onClick: () => void }) {
+function RailNavButton({ item, active, badge, onClick }: { item: TabDefinition; active: boolean; badge: number; onClick: () => void }) {
   return (
     <button className={active ? 'active' : ''} onClick={onClick} aria-current={active ? 'page' : undefined}>
       <span className="rail-nav-icon"><Icon name={item.icon} />{badge > 0 && <i>{badge}</i>}</span>
@@ -131,7 +138,7 @@ function RailNavButton({ item, active, badge, onClick }: { item: { id: Tab; labe
   );
 }
 
-function NavButton({ item, active, badge, onClick }: { item: { id: Tab; label: string; icon: TabIcon }; active: boolean; badge: number; onClick: () => void }) {
+function NavButton({ item, active, badge, onClick }: { item: Pick<TabDefinition, 'id' | 'label' | 'icon'>; active: boolean; badge: number; onClick: () => void }) {
   return <button className={active ? 'active' : ''} onClick={onClick} aria-current={active ? 'page' : undefined}><span><Icon name={item.icon} />{badge > 0 && <i>{badge}</i>}</span><small>{item.label}</small></button>;
 }
 
