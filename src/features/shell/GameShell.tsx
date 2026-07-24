@@ -15,7 +15,7 @@ type TabIcon = 'home' | 'factory' | 'market' | 'map';
 
 const tabs: { id: Tab; label: string; description: string; icon: TabIcon }[] = [
   { id: 'today', label: 'Сегодня', description: 'Решения и движение дня', icon: 'home' },
-  { id: 'production', label: 'Производство', description: 'Рецепты, сырьё и партии', icon: 'factory' },
+  { id: 'production', label: 'Производство', description: 'Партии, сырьё и объект', icon: 'factory' },
   { id: 'trade', label: 'Торговля', description: 'Бренды, сделки и покупатели', icon: 'market' },
   { id: 'world', label: 'Мир', description: 'Бары, клубы и компании', icon: 'map' },
 ];
@@ -28,7 +28,6 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
   const activeOffers = game.state.world?.proposals.filter((proposal) => proposal.status === 'offer').length ?? 0;
   const activeOrders = game.state.world?.repeatOrders.filter((order) => order.status === 'pending').length ?? 0;
   const readyBatches = game.state.production.batches.filter((batch) => ['ready', 'tasted'].includes(batch.status)).length;
-  const attentionCount = activeOffers + activeOrders + readyBatches;
 
   function finishDay() {
     const result = game.nextDay();
@@ -48,12 +47,14 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
     return 0;
   }
 
+  const currentTab = tabs.find((item) => item.id === tab) ?? tabs[0];
+
   return (
     <div className={`app-shell ux-shell ${productionFlowOpen ? 'flow-active' : ''}`}>
       <aside className="desktop-rail" aria-label="Основная навигация">
         <div className="rail-brand">
           <span className="rail-brand-mark"><Icon name="bottle" /></span>
-          <span><strong>Drink Company</strong><small>premium beverage house</small></span>
+          <span><strong>Drink Company</strong><small>Управление производством</small></span>
         </div>
 
         <nav className="rail-navigation">
@@ -64,7 +65,7 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
 
         <button className="rail-day-action" onClick={finishDay}>
           <span><Icon name="clock" /></span>
-          <span><small>Продолжить симуляцию</small><strong>Завершить день {game.state.day}</strong></span>
+          <span><small>Симуляция</small><strong>Завершить день {game.state.day}</strong></span>
           <Icon name="arrow" />
         </button>
 
@@ -85,12 +86,12 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
             <Icon name="arrow" />
           </button>
           <div className="topbar-context">
-            <span>{tabs.find((item) => item.id === tab)?.label}</span>
-            <small>{tabs.find((item) => item.id === tab)?.description}</small>
+            <strong>{currentTab.label}</strong>
+            <small>{currentTab.description}</small>
           </div>
-          <div className="topbar-metrics">
-            <div><span>Баланс</span><strong>{formatMoney(game.state.finance.cash)}</strong></div>
-            <div><span>Внимание</span><strong>{attentionCount}</strong></div>
+          <div className="topbar-balance" aria-label="Баланс компании">
+            <span>Баланс</span>
+            <strong>{formatMoney(game.state.finance.cash)}</strong>
           </div>
         </header>
 
@@ -104,11 +105,17 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
 
       {dayMessage && <div className="day-toast" role="status"><Icon name="check" />{dayMessage}</div>}
 
-      {!productionFlowOpen && <nav className="main-dock" aria-label="Основная навигация">
-        {tabs.slice(0, 2).map((item) => <NavButton key={item.id} item={item} active={tab === item.id} badge={badgeFor(item.id)} onClick={() => setTab(item.id)} />)}
-        <button className="next-day-control" onClick={finishDay} aria-label="Перейти к следующему дню"><Icon name="clock" /><span>День</span></button>
-        {tabs.slice(2).map((item) => <NavButton key={item.id} item={item} active={tab === item.id} badge={badgeFor(item.id)} onClick={() => setTab(item.id)} />)}
-      </nav>}
+      {!productionFlowOpen && (
+        <>
+          <button className="mobile-day-action" onClick={finishDay}>
+            <span><Icon name="clock" />Завершить день</span>
+            <strong>{game.state.day}</strong>
+          </button>
+          <nav className="main-dock" aria-label="Основная навигация">
+            {tabs.map((item) => <NavButton key={item.id} item={item} active={tab === item.id} badge={badgeFor(item.id)} onClick={() => setTab(item.id)} />)}
+          </nav>
+        </>
+      )}
 
       {companyOpen && <Modal title={game.state.company.name} kicker={`День ${game.state.day} · ${game.state.mode === 'roguelike' ? 'жёсткий режим' : 'стандарт'}`} onClose={() => setCompanyOpen(false)} wide><CompanyCenter game={game} version={version} /></Modal>}
     </div>

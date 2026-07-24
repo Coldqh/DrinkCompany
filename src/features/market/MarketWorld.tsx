@@ -86,6 +86,7 @@ export function MarketWorld({ state, onSendProposal, onAcceptOffer, onDeclineOff
 
   return <div className="screen-stack trade-screen">
     {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
+    <header className="mobile-page-heading"><h1>Торговля</h1><p>Товары, заказы и покупатели.</p></header>
     <EditorialVisual
       variant="bar"
       eyebrow="Коммерция и hospitality"

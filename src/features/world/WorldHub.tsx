@@ -92,6 +92,8 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
     <div className="world-hub compact-page">
       {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
 
+      <header className="mobile-page-heading"><h1>Мир</h1><p>Объекты, компании и товарные потоки.</p></header>
+
       <EditorialVisual
         variant="city"
         eyebrow="Живая индустрия"
