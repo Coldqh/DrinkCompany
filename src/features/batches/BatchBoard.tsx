@@ -11,13 +11,15 @@ interface BatchBoardProps {
   onTaste: (batchId: string) => ActionResult;
   onPackage: (batchId: string) => ActionResult;
   onDiscard: (batchId: string) => ActionResult;
-  onOpenProduction: () => void;
+  mode?: 'active' | 'bottling';
 }
 
-export function BatchBoard({ state, onTaste, onPackage, onDiscard, onOpenProduction }: BatchBoardProps) {
+export function BatchBoard({ state, onTaste, onPackage, onDiscard, mode = 'active' }: BatchBoardProps) {
   const [feedback, setFeedback] = useState<ActionResult | null>(null);
   const [selectedBatch, setSelectedBatch] = useState<BatchState | null>(null);
-  const batches = [...state.production.batches].sort((a, b) => b.startedDay - a.startedDay);
+  const batches = [...state.production.batches]
+    .filter((batch) => mode === 'bottling' ? ['ready', 'tasted', 'packaged'].includes(batch.status) : !['packaged', 'discarded'].includes(batch.status))
+    .sort((a, b) => b.startedDay - a.startedDay);
   const hasBottler = state.production.equipmentIds.includes('compact-bottler');
 
   function handle(result: ActionResult) {
@@ -28,7 +30,7 @@ export function BatchBoard({ state, onTaste, onPackage, onDiscard, onOpenProduct
 
   return <div className="simple-hub">
     {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
-    {batches.length === 0 ? <div className="plain-panel"><EmptyState icon="batch" title="Партий пока нет" text="Создай рецепт и запусти производство." action={<button className="button primary" onClick={onOpenProduction}>Новая партия</button>} /></div> : <div className="simple-list plain-panel">
+    {batches.length === 0 ? <div className="plain-panel"><EmptyState icon="batch" title={mode === 'bottling' ? 'Нет партий для розлива' : 'Активных партий нет'} text={mode === 'bottling' ? 'Готовые и продегустированные партии появятся здесь.' : 'Запуск выполняется через единственную кнопку «Новая партия» вверху раздела.'} /></div> : <div className="simple-list plain-panel">
       {batches.map((batch) => <button key={batch.id} onClick={() => setSelectedBatch(batch)}>
         <span className="batch-status-mark"><strong>{batch.status === 'packaged' ? batch.availableUnits : batch.progress}</strong><small>{batch.status === 'packaged' ? 'бут.' : '%'}</small></span>
         <span><strong>{batch.recipe.name}</strong><small>{batch.code} · {statusLabel(batch.status)} · {batch.recipe.volumeLiters} л</small></span>

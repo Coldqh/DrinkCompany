@@ -22,6 +22,7 @@ interface DecisionItem {
 
 export function TodayView({ state, onOpen }: TodayViewProps) {
   const decisions = buildDecisions(state);
+  const primaryDecision = decisions[0];
   const activeBatches = state.production.batches.filter((batch) => !['packaged', 'discarded'].includes(batch.status));
   const shipments = state.supply.purchaseOrders.filter((order) => ['pending', 'delayed'].includes(order.status));
   const freight = state.ecosystem?.trade.shipments.filter((shipment) => ['awaiting_transport', 'in_transit', 'delayed', 'customs_hold'].includes(shipment.status)) ?? [];
@@ -35,7 +36,7 @@ export function TodayView({ state, onOpen }: TodayViewProps) {
         title={decisions.length > 0 ? `${decisions.length} решения требуют внимания` : 'Компания работает в заданном ритме'}
         metric={formatMoney(state.finance.cash)}
         note={`${cashDays > 90 ? '90+ дней' : `${cashDays} дней`} финансового запаса`}
-        action={<button className="button visual-button" onClick={() => onOpen(decisions[0]?.target ?? 'production')}>{decisions.length > 0 ? 'Открыть главное' : 'Проверить производство'}<Icon name="arrow" /></button>}
+        action={primaryDecision ? <button className="button visual-button" onClick={() => onOpen(primaryDecision.target)}>Открыть решение<Icon name="arrow" /></button> : undefined}
       />
 
       <section className="today-metrics" aria-label="Ключевые показатели">
