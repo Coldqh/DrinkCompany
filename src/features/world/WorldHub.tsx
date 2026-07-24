@@ -31,6 +31,7 @@ import type { RetailVenueStatus, RetailVenueType } from '../../domain/retail';
 import { Icon } from '../../ui/Icon';
 import { EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
 import { EditorialVisual } from '../../ui/EditorialVisual';
+import { ClubOperations } from './ClubOperations';
 
 type Section = 'city' | 'organizations' | 'flows' | 'group' | 'control' | 'chronicle' | 'deals';
 
@@ -47,9 +48,10 @@ interface WorldHubProps {
   onClean: (assetId: string) => ActionResult;
   onUpgrade: (assetId: string) => ActionResult;
   onStatus: (assetId: string, status: RetailVenueStatus) => ActionResult;
+  onFlowChange?: (open: boolean) => void;
 }
 
-export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onInject, onPolicy, onTransfer, onStock, onClean, onUpgrade, onStatus }: WorldHubProps) {
+export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onInject, onPolicy, onTransfer, onStock, onClean, onUpgrade, onStatus, onFlowChange }: WorldHubProps) {
   const [section, setSection] = useState<Section>('city');
   const [search, setSearch] = useState('');
   const [assetModal, setAssetModal] = useState<WorldAssetState | null>(null);
@@ -57,9 +59,11 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
   const [stockAsset, setStockAsset] = useState<WorldAssetState | null>(null);
   const [productModal, setProductModal] = useState<TradeProductState | null>(null);
   const [feedback, setFeedback] = useState<ActionResult | null>(null);
+  const [clubOpen, setClubOpen] = useState(false);
   const ecosystem = state.ecosystem;
 
   if (!ecosystem) return <EmptyState icon="map" title="Мир ещё не создан" text="Заверши создание компании, чтобы загрузить организации и недвижимость региона." />;
+  if (clubOpen) return <ClubOperations state={state} onClose={() => setClubOpen(false)} onFlowChange={onFlowChange} />;
 
   const controlledAssets = ecosystem.assets.filter((asset) => isPlayerControlledAsset(ecosystem, asset));
   const subsidiaries = ecosystem.subsidiaries.map((control) => ({ control, organization: ecosystem.organizations.find((organization) => organization.id === control.organizationId) })).filter((item): item is { control: typeof ecosystem.subsidiaries[number]; organization: OrganizationState } => Boolean(item.organization));
@@ -92,7 +96,7 @@ export function WorldHub({ state, onAcquire, onLease, onInvest, onTakeover, onIn
     <div className="world-hub compact-page">
       {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
 
-      <header className="mobile-page-heading"><h1>Мир</h1><p>Объекты, компании и товарные потоки.</p></header>
+      <header className="mobile-page-heading world-lux-heading"><div><h1>Мир</h1><p>Объекты, компании и товарные потоки.</p></div><button className="lux-primary" onClick={() => setClubOpen(true)}><Icon name="beer" />Открыть клуб</button></header>
 
       <EditorialVisual
         variant="city"

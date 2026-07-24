@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './app/App';
 import './styles/global.css';
 import './styles/mobile-overhaul.css';
+import './styles/luxury-ui.css';
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

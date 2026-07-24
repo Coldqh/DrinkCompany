@@ -7,7 +7,7 @@ import { MarketWorld } from '../market/MarketWorld';
 import { WorldHub } from '../world/WorldHub';
 import { CompanyCenter } from '../company/CompanyCenter';
 import { Icon } from '../../ui/Icon';
-import { Modal } from '../../ui/MobileUI';
+import { BrandCrest } from '../../ui/LuxuryPrimitives';
 
 export type Tab = 'today' | 'production' | 'trade' | 'world';
 
@@ -88,7 +88,7 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
       <div className="app-stage">
         <header className="topbar ux-topbar">
           <button className="company-trigger" onClick={() => setCompanyOpen(true)}>
-            <span className="brand-symbol">{companyInitials(game.state.company.name)}</span>
+            <BrandCrest compact />
             <span><small>День {game.state.day}</small><strong>{game.state.company.name}</strong></span>
             <Icon name="arrow" />
           </button>
@@ -100,31 +100,26 @@ export function GameShell({ game, version }: { game: GameController; version: Ve
             <span>Баланс</span>
             <strong>{formatMoney(game.state.finance.cash)}</strong>
           </div>
+          <button className="topbar-day-action" onClick={finishDay}>Завершить день</button>
         </header>
 
         <main className="content ux-content" key={tab}>
           {tab === 'today' && <TodayView state={game.state} onOpen={openTarget} />}
           {tab === 'production' && <ProductionStudio state={game.state} onBuyEquipment={game.buyEquipment} onSaveRecipe={game.saveRecipeDraft} onLaunchBatch={game.launchBatch} onTaste={game.tasteBatch} onPackage={game.packageBatch} onDiscard={game.discardBatch} onOrderSupply={game.orderSupply} onSignSupplier={game.signSupplier} onExpandRoom={game.expandRoom} onExpandUtility={game.expandUtility} onCleanFacility={game.cleanFacility} onServiceEquipment={game.serviceEquipment} onUpgradeEquipment={game.upgradeEquipment} onQueueRecipe={game.queueRecipe} onRemoveQueue={game.removeQueue} onCreateBrand={game.createBrand} onCreateRelease={game.createRelease} onOpenTrade={() => setTab('trade')} onFlowChange={setProductionFlowOpen} />}
           {tab === 'trade' && <MarketWorld state={game.state} onSendProposal={game.sendProposal} onAcceptOffer={game.acceptOffer} onDeclineOffer={game.declineOffer} onFulfillOrder={game.fulfillOrder} onCreateBrand={game.createBrand} onCreateRelease={game.createRelease} onLaunchCampaign={game.launchCampaign} />}
-          {tab === 'world' && <WorldHub state={game.state} onAcquire={game.acquireAsset} onLease={game.leaseAsset} onInvest={game.investOrganization} onTakeover={game.takeoverOrganization} onInject={game.injectSubsidiaryCapital} onPolicy={game.setSubsidiaryPolicy} onTransfer={game.transferGroupAsset} onStock={game.stockWorldVenue} onClean={game.cleanWorldVenue} onUpgrade={game.upgradeWorldVenue} onStatus={game.setWorldVenueStatus} />}
+          {tab === 'world' && <WorldHub state={game.state} onAcquire={game.acquireAsset} onLease={game.leaseAsset} onInvest={game.investOrganization} onTakeover={game.takeoverOrganization} onInject={game.injectSubsidiaryCapital} onPolicy={game.setSubsidiaryPolicy} onTransfer={game.transferGroupAsset} onStock={game.stockWorldVenue} onClean={game.cleanWorldVenue} onUpgrade={game.upgradeWorldVenue} onStatus={game.setWorldVenueStatus} onFlowChange={setProductionFlowOpen} />}
         </main>
       </div>
 
       {dayMessage && <div className="day-toast" role="status"><Icon name="check" />{dayMessage}</div>}
 
       {!productionFlowOpen && (
-        <>
-          <button className="mobile-day-action" onClick={finishDay}>
-            <span><Icon name="clock" />Завершить день</span>
-            <strong>{game.state.day}</strong>
-          </button>
-          <nav className="main-dock" aria-label="Основная навигация">
-            {tabs.map((item) => <NavButton key={item.id} item={item} active={tab === item.id} badge={badgeFor(item.id)} onClick={() => setTab(item.id)} />)}
-          </nav>
-        </>
+        <nav className="main-dock" aria-label="Основная навигация">
+          {tabs.map((item) => <NavButton key={item.id} item={item} active={tab === item.id} badge={badgeFor(item.id)} onClick={() => setTab(item.id)} />)}
+        </nav>
       )}
 
-      {companyOpen && <Modal title={game.state.company.name} kicker={`День ${game.state.day} · ${game.state.mode === 'roguelike' ? 'жёсткий режим' : 'стандарт'}`} onClose={() => setCompanyOpen(false)} wide><CompanyCenter game={game} version={version} /></Modal>}
+      {companyOpen && <CompanyCenter game={game} version={version} onClose={() => setCompanyOpen(false)} />}
     </div>
   );
 }

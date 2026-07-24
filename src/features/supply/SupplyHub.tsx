@@ -1,179 +1,112 @@
 import { useMemo, useState } from 'react';
 import type { ActionResult } from '../../app/useGameState';
-import { getIngredient, getSupplier, suppliers } from '../../data/supplyCatalog';
+import { getIngredient, getSupplier, suppliers, type IngredientUnit } from '../../data/supplyCatalog';
 import type { GameState } from '../../domain/game';
-import { formatQuantity, inventoryValue, type InventoryLot, type SupplierOfferState } from '../../domain/supply';
+import { formatQuantity, type InventoryLot, type SupplierOfferState } from '../../domain/supply';
+import { IngredientArt, RatingStars, type IngredientVisualVariant } from '../../ui/LuxuryPrimitives';
 import { Icon } from '../../ui/Icon';
-import { EmptyState, Modal, SubTabs } from '../../ui/MobileUI';
+import { EmptyState, Modal } from '../../ui/MobileUI';
 
 interface SupplyHubProps {
   state: GameState;
   initialSection?: SupplySection;
   onOrder: (offerId: string, quantity: number) => ActionResult;
   onSignSupplier: (supplierId: string) => ActionResult;
+  onBack?: () => void;
 }
 
-type SupplySection = 'inventory' | 'suppliers' | 'orders';
+export type SupplySection = 'inventory' | 'suppliers' | 'contracts' | 'orders';
+type SortMode = 'recommended' | 'price' | 'quality' | 'delivery';
 
-export function SupplyHub({ state, onOrder, onSignSupplier, initialSection = 'inventory' }: SupplyHubProps) {
+export function SupplyHub({ state, onOrder, onSignSupplier, initialSection = 'suppliers', onBack }: SupplyHubProps) {
   const [section, setSection] = useState<SupplySection>(initialSection);
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<SortMode>('recommended');
   const [selectedLot, setSelectedLot] = useState<InventoryLot | null>(null);
   const [selectedOffer, setSelectedOffer] = useState<SupplierOfferState | null>(null);
   const [quantity, setQuantity] = useState(0);
   const [feedback, setFeedback] = useState<ActionResult | null>(null);
   const inventory = state.supply.inventory.filter((lot) => lot.quantity > 0);
   const pending = state.supply.purchaseOrders.filter((order) => ['pending', 'delayed'].includes(order.status));
-  const delivered = state.supply.purchaseOrders.filter((order) => order.status === 'delivered');
+  const agreements = state.supply.relationships.filter((item) => item.agreement);
   const query = search.trim().toLocaleLowerCase('ru-RU');
+
+  const offers = useMemo(() => state.supply.offers
+    .filter((offer) => {
+      const ingredient = getIngredient(offer.ingredientId);
+      const supplier = getSupplier(offer.supplierId);
+      return !query || `${ingredient.name} ${offer.variantName} ${supplier.name} ${offer.origin}`.toLocaleLowerCase('ru-RU').includes(query);
+    })
+    .sort((left, right) => {
+      if (sort === 'price') return left.currentPrice - right.currentPrice;
+      if (sort === 'quality') return right.qualityEstimate[1] - left.qualityEstimate[1];
+      if (sort === 'delivery') return left.currentLeadDays - right.currentLeadDays;
+      return recommendationScore(right) - recommendationScore(left);
+    }), [query, sort, state.supply.offers]);
 
   const supplierStats = useMemo(() => suppliers.map((supplier) => {
     const relation = state.supply.relationships.find((item) => item.supplierId === supplier.id);
-    const offers = state.supply.offers.filter((offer) => offer.supplierId === supplier.id);
-    return { supplier, relation, offers };
-  }).filter(({ supplier, offers }) => !query || `${supplier.name} ${supplier.focus} ${supplier.region} ${offers.map((offer) => `${offer.variantName} ${getIngredient(offer.ingredientId).name}`).join(' ')}`.toLocaleLowerCase('ru-RU').includes(query)), [query, state.supply]);
+    const supplierOffers = offers.filter((offer) => offer.supplierId === supplier.id);
+    return { supplier, relation, offers: supplierOffers };
+  }).filter((item) => item.offers.length > 0), [offers, state.supply.relationships]);
 
-  function show(result: ActionResult) {
-    setFeedback(result);
-    window.setTimeout(() => setFeedback(null), 3000);
-  }
+  const critical = state.supply.offers
+    .filter((offer) => !inventory.some((lot) => lot.ingredientId === offer.ingredientId && lot.quantity > offer.minimumOrder))
+    .filter((offer, index, all) => all.findIndex((item) => item.ingredientId === offer.ingredientId) === index)
+    .slice(0, 3);
+  const best = offers[0] ?? null;
+  const nextOrder = [...pending].sort((left, right) => left.expectedDay - right.expectedDay)[0] ?? null;
 
-  function openOffer(offer: SupplierOfferState) {
-    setSelectedOffer(offer);
-    setQuantity(offer.defaultOrder);
-  }
-
-  function submitOrder() {
-    if (!selectedOffer) return;
-    const result = onOrder(selectedOffer.id, quantity);
-    show(result);
-    if (result.ok) {
-      setSelectedOffer(null);
-      setSection('orders');
-    }
-  }
+  function show(result: ActionResult) { setFeedback(result); window.setTimeout(() => setFeedback(null), 2800); }
+  function openOffer(offer: SupplierOfferState) { setSelectedOffer(offer); setQuantity(offer.defaultOrder); }
+  function submitOrder() { if (!selectedOffer) return; const result = onOrder(selectedOffer.id, quantity); show(result); if (result.ok) { setSelectedOffer(null); setSection('orders'); } }
 
   return (
-    <div className="supply-hub">
-      {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}>{feedback.ok ? <Icon name="check" /> : <Icon name="warning" />}{feedback.message}</div>}
+    <div className="lux-screen lux-market-screen">
+      {feedback && <div className={`toast ${feedback.ok ? 'success' : 'error'}`}><Icon name={feedback.ok ? 'check' : 'warning'} />{feedback.message}</div>}
+      <header className="lux-screen-header lux-market-header">
+        {onBack && <button className="lux-icon-button" onClick={onBack} aria-label="Назад в производство"><Icon name="arrow" /></button>}
+        <div className="lux-screen-title"><span>Снабжение и закупки</span><h1>Рынок ингредиентов</h1><p>Сравнивай предложения и закупай лучшее сырьё.</p></div>
+        <span className="lux-market-balance"><small>Предложения</small><strong>{state.supply.offers.length}</strong></span>
+      </header>
 
-      <div className="supply-summary">
-        <div><span>Склад</span><strong>{formatMoney(inventoryValue(inventory))}</strong><small>{inventory.length} активных лотов</small></div>
-        <div><span>В пути</span><strong>{pending.length}</strong><small>{formatMoney(pending.reduce((sum, order) => sum + order.totalCost, 0))} оплачено</small></div>
-        <div><span>Договоры</span><strong>{state.supply.relationships.filter((item) => item.agreement).length}</strong><small>постоянных</small></div>
-      </div>
+      <nav className="lux-tabs lux-market-tabs" aria-label="Разделы рынка ингредиентов">
+        {([['inventory', 'Сырьё'], ['suppliers', 'Поставщики'], ['contracts', 'Контракты'], ['orders', 'Заказы']] as Array<[SupplySection, string]>).map(([id, label]) => <button key={id} className={section === id ? 'active' : ''} onClick={() => setSection(id)}>{label}{id === 'orders' && pending.length > 0 && <i>{pending.length}</i>}</button>)}
+      </nav>
 
-      <SubTabs value={section} onChange={setSection} options={[
-        { id: 'inventory', label: 'Склад', badge: inventory.length },
-        { id: 'suppliers', label: 'Поставщики' },
-        { id: 'orders', label: 'Заказы', badge: pending.length },
-      ]} />
-
-      {section === 'inventory' && (
-        inventory.length === 0 ? (
-          <section className="plain-panel"><EmptyState icon="archive" title="Склад пуст" text="Закупка выполняется из требований новой партии или в разделе поставщиков." /></section>
-        ) : (
-          <section className="compact-list plain-panel">
-            {inventory.map((lot) => {
-              const ingredient = getIngredient(lot.ingredientId);
-              const freshness = Math.max(0, lot.expiresDay - state.day);
-              return (
-                <button key={lot.id} className="compact-list-row supply-lot-row" onClick={() => setSelectedLot(lot)}>
-                  <span className={`quality-orb q-${qualityBand(lot.quality)}`}>{lot.quality}</span>
-                  <span><strong>{lot.variantName}</strong><small>{ingredient.name} · {lot.origin} · ещё {freshness} дн.</small></span>
-                  <span className="row-status positive">{formatQuantity(lot.quantity, ingredient.unit)}</span>
-                </button>
-              );
-            })}
-          </section>
-        )
-      )}
+      {(section === 'inventory' || section === 'suppliers') && <div className="lux-market-toolbar"><label><Icon name="search" /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Ингредиент или поставщик" /></label><select value={sort} onChange={(event) => setSort(event.target.value as SortMode)} aria-label="Сортировка"><option value="recommended">Рекомендуемое</option><option value="price">Цена</option><option value="quality">Качество</option><option value="delivery">Доставка</option></select></div>}
 
       {section === 'suppliers' && <>
-        <div className="content-toolbar supply-toolbar">
-          <label className="search-field"><Icon name="search" /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Сырьё, товар или поставщик" aria-label="Поиск предложений поставщиков" /></label>
-          <span>{supplierStats.reduce((sum, item) => sum + item.offers.length, 0)} предложений</span>
-        </div>
-        <section className="supplier-catalog">
-          {supplierStats.map(({ supplier, relation, offers }) => (
-            <article key={supplier.id} className="supplier-catalog-card plain-panel">
-              <header>
-                <span><strong>{supplier.name}</strong><small>{supplier.region}, {supplier.country} · надёжность {supplier.reliability}/100</small></span>
-                <span className={`row-status ${relation?.agreement ? 'positive' : ''}`}>{relation?.agreement ? 'договор' : `отношения ${relation?.relationship ?? 0}`}</span>
-              </header>
-              <p>{supplier.focus}. {supplier.summary}</p>
-              <div className="supplier-catalog-offers">
-                {offers.map((offer) => {
-                  const ingredient = getIngredient(offer.ingredientId);
-                  return <button key={offer.id} onClick={() => openOffer(offer)}>
-                    <span><strong>{offer.variantName}</strong><small>{ingredient.name} · {offer.origin}</small></span>
-                    <span><strong>{offer.currentPrice.toFixed(2)} / {unitShort(ingredient.unit)}</strong><small>{offer.qualityEstimate[0]}–{offer.qualityEstimate[1]} качество · {offer.currentLeadDays} дн.</small></span>
-                  </button>;
-                })}
-              </div>
-              {!relation?.agreement && <button className="supplier-contract-action" onClick={() => show(onSignSupplier(supplier.id))} disabled={(relation?.relationship ?? 0) < 35}>Постоянный договор · 350</button>}
-            </article>
-          ))}
-          {supplierStats.length === 0 && <section className="plain-panel"><EmptyState icon="store" title="Ничего не найдено" text="Измени запрос: поиск работает по сырью, товару и названию поставщика." /></section>}
+        <section className="lux-market-summary">
+          <article><header>Нужно докупить</header>{critical.length ? critical.map((offer) => <p key={offer.ingredientId}><Icon name="warning" />{getIngredient(offer.ingredientId).name}</p>) : <p><Icon name="check" />Критичных дефицитов нет</p>}<button onClick={() => setSection('inventory')}>Смотреть склад <Icon name="arrow" /></button></article>
+          <article><header>Лучшее предложение</header>{best ? <><strong>{getIngredient(best.ingredientId).name}</strong><span>{getSupplier(best.supplierId).name}</span><b>{formatPrice(best.currentPrice, getIngredient(best.ingredientId).unit)}</b><RatingStars value={best.qualityEstimate[1] / 20} /><small>Поставка: {best.currentLeadDays} дн.</small></> : <p>Нет предложений</p>}</article>
+          <article><header>Прибудет скоро</header><span className="market-truck"><Icon name="market" /></span><strong>{nextOrder ? `День ${nextOrder.expectedDay}` : 'Нет поставок'}</strong><small>{nextOrder ? `${formatQuantity(nextOrder.quantity, nextOrder.unit)} · ${getSupplier(nextOrder.supplierId).name}` : 'Оформи заказ на рынке'}</small></article>
         </section>
+
+        <section className="lux-offer-section"><header><span>Предложения на рынке</span><small>{offers.length} доступно</small></header><div className="lux-offer-list">{offers.slice(0, 12).map((offer, index) => <OfferRow key={offer.id} offer={offer} rank={index + 1} best={offer.id === best?.id} onOpen={() => openOffer(offer)} />)}</div>{offers.length === 0 && <EmptyState icon="store" title="Ничего не найдено" text="Измени поисковый запрос." />}</section>
+
+        <section className="lux-market-footer-stats"><article><span>Рыночная ситуация</span><strong className="success">Стабильная</strong><small>Цены без резких изменений</small></article><article><span>Доставки</span><strong>{pending.length}</strong><small>в пути на склад</small></article><article><span>Контракты</span><strong>{agreements.length}</strong><small>активных соглашений</small></article></section>
       </>}
 
-      {section === 'orders' && (
-        state.supply.purchaseOrders.length === 0 ? (
-          <section className="plain-panel"><EmptyState icon="handshake" title="Закупок пока нет" text="Заказы появятся здесь после покупки из требований партии или каталога поставщиков." /></section>
-        ) : (
-          <section className="compact-list plain-panel">
-            {[...pending, ...delivered, ...state.supply.purchaseOrders.filter((order) => !['pending', 'delayed', 'delivered'].includes(order.status))].map((order) => {
-              const offer = state.supply.offers.find((item) => item.id === order.offerId);
-              return (
-                <div key={order.id} className="compact-list-row order-row static-row">
-                  <span className={`row-icon order-${order.status}`}><Icon name={order.status === 'delivered' ? 'check' : order.status === 'delayed' ? 'warning' : 'clock'} /></span>
-                  <span><strong>{offer?.variantName ?? order.ingredientId}</strong><small>{getSupplier(order.supplierId).name} · {formatQuantity(order.quantity, order.unit)} · {order.note}</small></span>
-                  <span className={`row-status ${order.status === 'delivered' ? 'positive' : order.status === 'delayed' ? 'required' : ''}`}>{order.status === 'delivered' ? `день ${order.deliveredDay}` : `до ${order.expectedDay}`}</span>
-                </div>
-              );
-            })}
-          </section>
-        )
-      )}
+      {section === 'inventory' && <InventorySection inventory={inventory} onOpen={setSelectedLot} />}
+      {section === 'contracts' && <ContractsSection state={state} supplierStats={supplierStats} onSign={(supplierId) => show(onSignSupplier(supplierId))} />}
+      {section === 'orders' && <OrdersSection state={state} />}
 
-      {selectedLot && (
-        <Modal title={selectedLot.variantName} kicker={getIngredient(selectedLot.ingredientId).name} onClose={() => setSelectedLot(null)}>
-          <div className="lot-quality"><strong>{selectedLot.quality}</strong><span>качество лота</span></div>
-          <div className="detail-grid">
-            <div><span>Остаток</span><strong>{formatQuantity(selectedLot.quantity, selectedLot.unit)}</strong></div>
-            <div><span>Цена</span><strong>{selectedLot.unitCost.toFixed(2)} / {unitShort(selectedLot.unit)}</strong></div>
-            <div><span>Происхождение</span><strong>{selectedLot.origin}</strong></div>
-            <div><span>Годен до</span><strong>день {selectedLot.expiresDay}</strong></div>
-          </div>
-          <p className="modal-description">Поставщик: {getSupplier(selectedLot.supplierId).name}. Исходный объём — {formatQuantity(selectedLot.initialQuantity, selectedLot.unit)}.</p>
-        </Modal>
-      )}
-
-      {selectedOffer && (
-        <Modal title={selectedOffer.variantName} kicker={`${getSupplier(selectedOffer.supplierId).name} · ${getIngredient(selectedOffer.ingredientId).name}`} onClose={() => setSelectedOffer(null)} footer={<button className="button primary" disabled={quantity < selectedOffer.minimumOrder || quantity > selectedOffer.availableQuantity} onClick={submitOrder}>Заказать · {formatMoney(selectedOffer.currentPrice * quantity)}</button>}>
-          <div className="detail-grid">
-            <div><span>Цена</span><strong>{selectedOffer.currentPrice.toFixed(2)} / {unitShort(getIngredient(selectedOffer.ingredientId).unit)}</strong></div>
-            <div><span>Качество</span><strong>{selectedOffer.qualityEstimate[0]}–{selectedOffer.qualityEstimate[1]}</strong></div>
-            <div><span>Доставка</span><strong>{selectedOffer.currentLeadDays} дн.</strong></div>
-            <div><span>Доступно</span><strong>{formatQuantity(selectedOffer.availableQuantity, getIngredient(selectedOffer.ingredientId).unit)}</strong></div>
-          </div>
-          <label className="order-quantity"><span>Количество</span><input type="number" min={selectedOffer.minimumOrder} max={selectedOffer.availableQuantity} step="1" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} /><small>Минимум {formatQuantity(selectedOffer.minimumOrder, getIngredient(selectedOffer.ingredientId).unit)}</small></label>
-          <div className={`price-trend ${selectedOffer.trend}`}><Icon name={selectedOffer.trend === 'expensive' ? 'warning' : selectedOffer.trend === 'cheaper' ? 'check' : 'market'} /><span>{selectedOffer.trend === 'expensive' ? 'Цена выше обычной' : selectedOffer.trend === 'cheaper' ? 'Цена сейчас выгодная' : 'Цена стабильна'}</span></div>
-        </Modal>
-      )}
+      {selectedLot && <Modal title={selectedLot.variantName} kicker={getIngredient(selectedLot.ingredientId).name} onClose={() => setSelectedLot(null)}><div className="lot-quality"><strong>{selectedLot.quality}</strong><span>качество лота</span></div><div className="detail-grid"><div><span>Остаток</span><strong>{formatQuantity(selectedLot.quantity, selectedLot.unit)}</strong></div><div><span>Цена</span><strong>{formatPrice(selectedLot.unitCost, selectedLot.unit)}</strong></div><div><span>Происхождение</span><strong>{selectedLot.origin}</strong></div><div><span>Годен до</span><strong>день {selectedLot.expiresDay}</strong></div></div></Modal>}
+      {selectedOffer && <Modal title={getIngredient(selectedOffer.ingredientId).name} kicker={`${selectedOffer.variantName} · ${getSupplier(selectedOffer.supplierId).name}`} onClose={() => setSelectedOffer(null)} footer={<button className="button primary" disabled={quantity < selectedOffer.minimumOrder || quantity > selectedOffer.availableQuantity} onClick={submitOrder}>Заказать · {formatMoney(selectedOffer.currentPrice * quantity)} ₽</button>}><div className="lux-order-preview"><IngredientArt variant={ingredientVisual(selectedOffer.ingredientId)} /><div><strong>{formatPrice(selectedOffer.currentPrice, getIngredient(selectedOffer.ingredientId).unit)}</strong><RatingStars value={selectedOffer.qualityEstimate[1] / 20} /><small>{selectedOffer.origin} · {selectedOffer.currentLeadDays} дн.</small></div></div><label className="order-quantity"><span>Количество</span><input type="number" min={selectedOffer.minimumOrder} max={selectedOffer.availableQuantity} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} /><small>Минимум {formatQuantity(selectedOffer.minimumOrder, getIngredient(selectedOffer.ingredientId).unit)}</small></label></Modal>}
     </div>
   );
 }
 
-function qualityBand(value: number) {
-  return value >= 90 ? 'top' : value >= 80 ? 'good' : value >= 70 ? 'mid' : 'low';
+function OfferRow({ offer, rank, best, onOpen }: { offer: SupplierOfferState; rank: number; best: boolean; onOpen: () => void }) {
+  const ingredient = getIngredient(offer.ingredientId); const supplier = getSupplier(offer.supplierId);
+  return <article className={best ? 'best' : ''}><span className="offer-rank">{rank}</span><IngredientArt variant={ingredientVisual(offer.ingredientId)} /><div className="offer-copy"><strong>{ingredient.name}</strong><span>{supplier.name}</span><small>{offer.origin} · {offer.currentLeadDays} дн. · мин. {formatQuantity(offer.minimumOrder, ingredient.unit)}</small></div><div className="offer-quality"><span>Качество</span><RatingStars value={offer.qualityEstimate[1] / 20} /></div><div className="offer-price"><strong>{formatPrice(offer.currentPrice, ingredient.unit)}</strong><button onClick={onOpen}>{best ? 'Лучшее' : 'Выбрать'}</button></div></article>;
 }
-
-function unitShort(unit: 'kg' | 'pack' | 'unit') {
-  return unit === 'kg' ? 'кг' : unit === 'pack' ? 'уп.' : 'шт.';
-}
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value);
-}
+function InventorySection({ inventory, onOpen }: { inventory: InventoryLot[]; onOpen: (lot: InventoryLot) => void }) { return <section className="lux-inventory-section"><header><span>Склад сырья</span><small>{inventory.length} активных лотов</small></header>{inventory.length === 0 ? <EmptyState icon="archive" title="Склад пуст" text="Открой поставщиков и выбери предложение." /> : <div>{inventory.map((lot) => <button key={lot.id} onClick={() => onOpen(lot)}><IngredientArt variant={ingredientVisual(lot.ingredientId)} /><span><strong>{lot.variantName}</strong><small>{getIngredient(lot.ingredientId).name} · {lot.origin}</small></span><b>{formatQuantity(lot.quantity, lot.unit)}</b><em>качество {lot.quality} · до дня {lot.expiresDay}</em></button>)}</div>}</section>; }
+function ContractsSection({ state, supplierStats, onSign }: { state: GameState; supplierStats: Array<{ supplier: (typeof suppliers)[number]; relation: GameState['supply']['relationships'][number] | undefined; offers: SupplierOfferState[] }>; onSign: (id: string) => void }) { return <section className="lux-contract-section"><header><span>Поставщики и договоры</span><small>{state.supply.relationships.filter((item) => item.agreement).length} активных</small></header><div>{supplierStats.map(({ supplier, relation, offers }) => <article key={supplier.id}><div><strong>{supplier.name}</strong><span>{supplier.region}, {supplier.country}</span><small>{supplier.focus} · надёжность {supplier.reliability}/100</small></div><b>{offers.length} предложений</b><button disabled={relation?.agreement || (relation?.relationship ?? 0) < 35} onClick={() => onSign(supplier.id)}>{relation?.agreement ? 'Договор активен' : `Заключить · отношения ${relation?.relationship ?? 0}`}</button></article>)}</div></section>; }
+function OrdersSection({ state }: { state: GameState }) { const orders = state.supply.purchaseOrders; return <section className="lux-orders-section"><header><span>Заказы и поставки</span><small>{orders.length} всего</small></header>{orders.length === 0 ? <EmptyState icon="handshake" title="Заказов пока нет" text="Выбери предложение поставщика." /> : <div>{orders.map((order) => <article key={order.id}><Icon name={order.status === 'delivered' ? 'check' : order.status === 'delayed' ? 'warning' : 'clock'} /><span><strong>{state.supply.offers.find((item) => item.id === order.offerId)?.variantName ?? order.ingredientId}</strong><small>{getSupplier(order.supplierId).name} · {formatQuantity(order.quantity, order.unit)}</small></span><b>{order.status === 'delivered' ? `Принято, день ${order.deliveredDay}` : order.status === 'delayed' ? `Задержка до дня ${order.expectedDay}` : `Прибудет, день ${order.expectedDay}`}</b></article>)}</div>}</section>; }
+function recommendationScore(offer: SupplierOfferState) { return offer.qualityEstimate[1] * 1.4 - offer.currentPrice * 2 - offer.currentLeadDays * 3 + (offer.trend === 'cheaper' ? 10 : offer.trend === 'expensive' ? -6 : 0); }
+function ingredientVisual(id: string): IngredientVisualVariant { const value = id.toLowerCase(); if (value.includes('citrus')) return 'citrus'; if (value.includes('agave')) return 'agave'; if (value.includes('coffee')) return 'coffee'; if (value.includes('tonic') || value.includes('mixer')) return 'tonic'; if (value.includes('orange')) return 'orange'; if (value.includes('mint') || value.includes('botanical')) return 'mint'; if (value.includes('ginger')) return 'ginger'; return 'generic'; }
+function unitShort(unit: IngredientUnit) { return unit === 'kg' ? 'кг' : unit === 'pack' ? 'уп.' : 'шт.'; }
+function formatPrice(value: number, unit: IngredientUnit) { return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)} ₽ / ${unitShort(unit)}`; }
+function formatMoney(value: number) { return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value); }

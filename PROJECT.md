@@ -218,3 +218,7 @@ npm run build
 - вторичные данные компаний и продуктов в мире свёрнуты в раскрываемые разделы;
 - во всём CSS разрешены только три размера шрифта: 24 px для заголовков, 15 px для текста и 12 px для данных;
 - игровое состояние, экономика и schemaVersion не изменены.
+
+## Patch 034 — Million-Dollar Mobile UI (0.30.0)
+
+Production, packaging, company, hospitality, cocktail creation and procurement interfaces were rebuilt around the approved luxury mobile direction. The patch changes presentation and navigation only; domain state, economy, migrations and saved-game schema remain unchanged. See `docs/FEATURE_SPEC_034_MILLION_DOLLAR_UI.md` and `docs/UX_AUDIT_034.md`.
